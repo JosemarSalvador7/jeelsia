@@ -223,12 +223,24 @@ def gerar_espejo(mensagem: str, estado: dict | None = None,
     conteudo = extrair_conteudo_espelhavel(mensagem)
     dom = (emocao or {}).get("dominante")
 
+    if not conteudo:
+        # Frases com cópula sem predicado ("é que loucura") ainda têm
+        # núcleo aproveitável — espelho vago estilo ELIZA.
+        nucleo = re.search(
+            r"(?:\b[eé]que?\s+|\b[eé]\s+|\bque\s+)([\wà-üáéíóúãõâêç'-]{4,})",
+            m_preparado := _preparar(mensagem))
+        if nucleo and len(m_preparado.split()) <= 6:
+            conteudo = nucleo.group(1)
+
     if conteudo:
         pool = _ESPEJO_POR_EMOCAO.get(dom, []) or _ESPEJO_BASE
         molde = random.choice(list(pool) + _ESPEJO_BASE)
         espejo = molde.format(c=conteudo.rstrip(".?!"))
-        # Evita duas perguntas coladas
-        return espejo if espejo.rstrip().endswith("?") else espejo + "?"
+        # Normaliza pontuação dupla ("...mais.??" → "...mais?")
+        espejo = re.sub(r"[.!?]+(\s*\?)", r"\1", espejo.strip())
+        if not espejo.endswith("?"):
+            espejo += "?"
+        return espejo
 
     # Marcadores de indecisão: a mensagem pode ter pontuação/acentos que
     # _preparar preserva, por isso testamos sobre o texto já preparado.

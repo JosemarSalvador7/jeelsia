@@ -162,14 +162,49 @@ def detectar_emocao(texto: str) -> dict:
     # / devolução de pergunta — não declaração de alegria. Sem este filtro,
     # a empatia de alegria monopolizava o turno e o padrão "estado" (que
     # responde corretamente "Tudo ótimo! E contigo?") nunca era alcançado.
-    saudacao_sozinha = bool(re.fullmatch(
-        r"\s*(oi+|ola|olá|eai|e aí|eae|hey|salve|opa|tchau|adeus)\s*[?!.]*\s*",
-        texto_lower))
+    # Saudações temporais ("bom dia", "boa tarde", "boa noite") são
+    # cortesia, NÃO declaração de alegria — sem este filtro, a palavra
+    # "bom"/"boa" monopolizava o turno com empatia de felicidade.
+    # O padrão é por FRASE (separadores , . ; ! ?): cobre também
+    # "bom dia, tudo bem?" e até com typos ("bom di a").
+    # Frases-curtas de cortesia (saudação/estado/devolução): se TODAS as
+    # frases da mensagem forem sociais, nenhuma emoção deve monopolizar.
+    _FRASE_SOCIAL_RE = re.compile(
+        r"^(?:oi+|ola|olá|eai|e aí|eae|hey|salve|opa|tchau|adeus|obrigad[oa]?"
+        r"|valeu|brigad[oa]|thanks|fm?|ok|okay|blz|beleza|boa|bom"
+        r"|(?:bom|boa)\s+[\wà-ü]{1,6}(?:\s+[\wà-ü]{1,3})?"
+        r"|(?:bom|boa)\s+(?:dia|tarde|noite)\s+t(?:aludes|empos?)"
+        r"|tudo\s+(?:bem|bom|ok|certo|joia|otimo|ótimo|tranquilo)[\w\s]*"
+        r"|tudo\s+e\s+contigo|tudo\s+(?:por\s+)?aqui"
+        r"|e\s+(?:contigo|convosco|com\s+(?:voce|voc[eê]|vc|tu|ti|mim|nos|nós))"
+        r"|como\s+vais?\s*(?:por\s+aqui)?"
+        r"|(?:estou|to|tou|estamos|ando)\s+(?:bem|otimo|ótimo|bom|legal|so\s+assim)"
+        r"|(?:estou|to|tou|estamos)\s+bem\s+(?:e|como)\s+.*"
+        r"|como\s+(?:voce|voc[eê]|vc|tu)\s+(?:esta|está|estas|estás|tá|ta|ficou|andai)"
+        r"|(?:voce|voc[eê]|vc|tu)\s+(?:como\s+)?(?:esta|está|estas|estás|tá|ta)?"
+        r"|meu\s+bem|mil\s+obrigad[oa]s?)[.!?]?\s*$"
+    )
+    frases = [f.strip() for f in re.split(r"[.!?;]+", texto_lower) if f.strip()]
+    # Sub-tokens por vírgula ("oi, bom dia" = duas saudações em fila)
+    subfrases = []
+    for f in frases:
+        partes = [x.strip() for x in f.split(",") if x.strip()]
+        subfrases.extend(partes or [f])
+    saudacao_sozinha = False
+    saudacao_temporal = bool(subfrases) and all(
+        _FRASE_SOCIAL_RE.match(x) for x in subfrases)
+    # Devolução de pergunta de cortesia: termina com "e você?", "vc tá?",
+    # "como vai?" etc. — quem pergunta pelo outro não está a declarar
+    # alegria própria ("estou bem e você?" deve ir ao padrão "estado").
     devolve_pergunta_cortesia = bool(re.search(
-        r"\b(tudo\s+bem|tudo\s+bom|como\s+(vc|voc[eê]|você|tu|está|estas|estás)[\s?!]*)\b[?\s!]*$",
-        texto_lower)) and not re.search(
-        r"\b(estou|to|tô|estamos|anda|vá|vai)\s+(mesmo|inclusive|ainda)\b", texto_lower)
-    if saudacao_sozinha or devolve_pergunta_cortesia:
+        r"(?:\b(?:e|como|já)\s+(?:c|vc|vcs|voc[eê]|voce|tu|ti|está|estas|"
+        r"estás|ficou|andai|anda|vai|corre|correm|passa)\b"
+        r"|\btá\s*\?|\bta\s*\?|\bcomo\s+vai\b"
+        r"|\bcom\s+(?:vc|voce|voc[eê]|tu|mim)(?:\s+(?:também|tambem|mesmo))?\b"
+        r"|\bpor\s+aqui\b)"
+        r"[^.!?]*(?:[?!]\s*)?$",
+        texto_lower))
+    if (saudacao_sozinha or saudacao_temporal or devolve_pergunta_cortesia):
         emocao["neutro"] = 1
         emocao["dominante"] = "neutro"
         emocao["_brutos"] = {"neutro": 1}
