@@ -14,6 +14,12 @@ from .fio import (
     responder_elipse,
     retomar_fio,
 )
+from .espejo import (
+    extrair_conteudo_espelhavel,
+    gerar_espejo,
+    aplicar_espejo,
+    tem_conteudo_espelhavel,
+)
 
 __all__ = [
     "criar_estado",
@@ -27,4 +33,9 @@ __all__ = [
     "proxima_pergunta_progressiva",
     "responder_elipse",
     "retomar_fio",
+    # espelhamento empático ELIZA-style
+    "extrair_conteudo_espelhavel",
+    "gerar_espejo",
+    "aplicar_espejo",
+    "tem_conteudo_espelhavel",
 ]

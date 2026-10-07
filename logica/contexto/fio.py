@@ -22,6 +22,18 @@ import re
 
 from logica.utils.texto import normalizar_texto
 
+# Importação tardia dentro de funções para evitar ciclo: espejo importa
+# contexto.contexto (REFLECTIONS), e este módulo é consumido por main.
+
+
+def _gerar_espejo_seguro(*args, **kwargs):
+    """Wrapper tolerante a falhas para o espelho ELIZA."""
+    try:
+        from .espejo import gerar_espejo as _ge
+        return _ge(*args, **kwargs)
+    except Exception:
+        return None
+
 # ----------------------------------------------------------------------
 # Vocabulário de continuidade conversacional
 # ----------------------------------------------------------------------
@@ -164,8 +176,19 @@ def atualizar_fio(estado: dict, mensagem: str, resposta_ia: str | None,
 
 
 def _fio_ativo(estado: dict) -> dict | None:
+    """Fio utilizável pelas mecânicas de elipse/retomada.
+
+    Antes exigia ``emocao`` válida (âncora emocional); passou também a
+    aceitar um fio com pergunta pendente — é o caso de espelhos ELIZA e
+    retomadas que ficam à espera de resposta mesmo sem emoção forte.
+    Sem isso, "sim" depois de um espelho caía em "não reconheci".
+    """
     fio = estado.get("fio")
-    if isinstance(fio, dict) and fio.get("emocao") in PERGUNTAS_PROGRESSIVAS:
+    if not isinstance(fio, dict):
+        return None
+    if fio.get("emocao") in PERGUNTAS_PROGRESSIVAS:
+        return fio
+    if fio.get("ultima_pergunta"):
         return fio
     return None
 
@@ -214,13 +237,29 @@ def responder_elipse(estado: dict, mensagem: str) -> str | None:
 
     if ultima:
         retomada = random.choice(RETOMADAS)
-        follow = None
+        follow = proxima_pergunta_progressiva(estado)
         if eh:
-            follow = proxima_pergunta_progressiva(estado)
             _avancar_nivel(fio)
-            fio["ultima_pergunta"] = follow
-        if eh and follow:
-            return f"{base} {retomada} {follow}"
+            nova_pend = follow or (fio.get("ultima_pergunta") or "")
+            fio["ultima_pergunta"] = nova_pend
+            if follow:
+                return f"{base} {retomada} {follow}"
+            # Sem pool progressivo (fio só com espelho pendente): retomar
+            # citando o último trecho memorizado em vez de repetir a
+            # pergunta que acabou de ser respondida.
+            resumo = fio.get("resumo") or []
+            gancho = ""
+            if resumo:
+                trecho = resumo[-1]
+                if len(trecho) > 60:
+                    trecho = trecho[:57].rstrip() + "..."
+                gancho = f"Sobre \"{trecho}\", "
+            convite = random.choice([
+                "queres acrescentar mais alguma coisa?",
+                "faz sentido parar aqui ou continuamos?",
+                "o que mais te vai passando pela cabeça?",
+            ])
+            return f"{base} {retomada} {gancho}{convite}"
         if not eh:
             return f"{base} Se mudares de ideias, é só dizer."
     if not eh:
@@ -231,7 +270,7 @@ def responder_elipse(estado: dict, mensagem: str) -> str | None:
 def proxima_pergunta_progressiva(estado: dict) -> str | None:
     """Devolve a próxima pergunta do fio, avançando um nível."""
     fio = _fio_ativo(estado)
-    if not fio:
+    if not fio or fio.get("emocao") not in PERGUNTAS_PROGRESSIVAS:
         return None
     pool = PERGUNTAS_PROGRESSIVAS[fio["emocao"]]
     nivel = fio.get("nivel", 0) % len(pool)
@@ -247,13 +286,12 @@ def retomar_fio(estado: dict, mensagem: str) -> str | None:
 
     Combina um reconhecimento curto com a próxima pergunta progressiva,
     citando quando possível a última frase relevante do utilizador.
+    Sem pool progressivo ativo (ex.: fio sustentado só por um espelho
+    ELIZA), usa o espelho diferido sobre a memória curta — nunca a
+    pergunta que está pendente (seria repetição).
     """
     fio = _fio_ativo(estado)
     if not fio or not eh_mensagem_vaga(mensagem):
-        return None
-
-    pergunta = proxima_pergunta_progressiva(estado)
-    if not pergunta:
         return None
 
     resumo = fio.get("resumo") or []
@@ -264,13 +302,25 @@ def retomar_fio(estado: dict, mensagem: str) -> str | None:
             trecho = trecho[:57].rstrip() + "..."
         gancho = f"Sobre \"{trecho}\", "
 
-    ponte = random.choice(RETOMADAS)
-    resposta = f"{ponte} {gancho}{pergunta[0].lower() + pergunta[1:]}"
+    pergunta = proxima_pergunta_progressiva(estado)
+    if pergunta:
+        ponte = random.choice(RETOMADAS)
+        resposta = f"{ponte} {gancho}{pergunta[0].lower() + pergunta[1:]}"
+        # O fio avançou: esta pergunta passa a ser a pendente.
+        fio["ultima_pergunta"] = pergunta
+        _avancar_nivel(fio)
+        return resposta
 
-    # O fio avançou: esta pergunta passa a ser a pendente.
-    fio["ultima_pergunta"] = pergunta
-    _avancar_nivel(fio)
-    return resposta
+    # Espelho diferido como retomada (ELIZA-escuta sobre a memória curta)
+    if resumo:
+        espejo = _gerar_espejo_seguro(resumo[-1], estado, None,
+                                      {"dominante": fio.get("emocao")})
+        if espejo and espejo != fio.get("ultima_pergunta"):
+            ponte = random.choice(RETOMADAS)
+            fio["ultima_pergunta"] = espejo
+            return f"{ponte} {espejo}"
+
+    return None
 
 
 def encerrar_fio_se_despedida(estado: dict, mensagem: str) -> None:

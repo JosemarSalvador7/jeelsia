@@ -28,10 +28,14 @@ from logica.contexto import (
     obter_resposta_unica,
     aplicar_reflections,
 )
+# Espelhamento empático ELIZA-style: devolve as palavras do utilizador
+# em perguntas abertas, fundindo a estrutura da Jeelsia com a escuta da ELIZA
+from logica.contexto.espejo import gerar_espejo, aplicar_espejo
 # Fio condutor: desenvolve a conversa sem perder o contexto entre turnos
 from logica.contexto.fio import (
     PERGUNTAS_PROGRESSIVAS as PERGUNTAS_EMOÇÕES_FIO,
     atualizar_fio,
+    eh_mensagem_vaga,
     encerrar_fio_se_despedida,
     proxima_pergunta_progressiva,
     responder_elipse,
@@ -461,9 +465,54 @@ class Jeelsia:
                 self._registra_turno(mensagem, "elipse", emocao, info_topicos)
                 return obter_resposta_unica(self.estado, elipse)
 
+            # Elipse com continuação ("sim, é mesmo o trabalho"): começa
+            # por concordância mas traz mais informação — é resposta à
+            # última pergunta da IA E desenvolvimento do tema. Entra como
+            # espelho ELIZA sobre o conteúdo acrescentado.
+            elipse_continuada = None
+            _m_norm = normalizar_texto(mensagem)
+            if any(_m_norm == e or _m_norm.startswith(f"{e} ")
+                   for e in ("sim", "pois", "poise", "claro", "exato",
+                             "exatamente", "é isso", "e isso", "isso mesmo")):
+                espejo_c = gerar_espejo(
+                    mensagem, self.estado, self.ctx_perfil, emocao)
+                if espejo_c:
+                    base = random.choice([
+                        "Fixe, então seguimos por aí.",
+                        "Perfeito, entendi.",
+                        "Boa, fico contente por continuares a contar.",
+                    ])
+                    elipse_continuada = f"{base} {espejo_c}"
+            if elipse_continuada:
+                _f = self.estado.get("fio") or {}
+                _f["ultima_pergunta"] = espejo_c
+                atualizar_fio(self.estado, mensagem, elipse_continuada,
+                              emocao=None)
+                persistir_fio_no_topico(self.estado)
+                self._registra_turno(mensagem, "elipse", emocao, info_topicos)
+                return obter_resposta_unica(self.estado, elipse_continuada)
+
             # Mensagem vaga ("hmm", "ah", "entendi") com desabafo pendente
             # → retomar o fio ativo, citando a última frase relevante.
             retomada = retomar_fio(self.estado, mensagem)
+            if not retomada and eh_mensagem_vaga(mensagem):
+                # Fallback ELIZA-style: vago + pergunta espelhada sobre o
+                # último trecho memorizado do utilizador (espelho diferido).
+                _fio_v = self.estado.get("fio") or {}
+                _resumo_v = _fio_v.get("resumo") or []
+                if _resumo_v:
+                    espejo_v = gerar_espejo(
+                        _resumo_v[-1], self.estado, self.ctx_perfil,
+                        {"dominante": _fio_v.get("emocao")})
+                    if espejo_v:
+                        ponte_v = random.choice([
+                            "Hmm, fico a pensar no que disseste.",
+                            "Entendo...",
+                            "Estou aqui, sem pressa.",
+                        ])
+                        retomada = f"{ponte_v} {espejo_v}"
+                        _f = self.estado.get("fio") or {}
+                        _f["ultima_pergunta"] = espejo_v
             if retomada:
                 atualizar_fio(self.estado, mensagem, retomada, emocao=None)
                 persistir_fio_no_topico(self.estado)
@@ -496,6 +545,20 @@ class Jeelsia:
                         follow = gerar_pergunta_seguimento(self.estado, "emocao")
                     if follow:
                         resposta_empatica = f"{resposta_empatica} {follow}"
+                # Espelhamento ELIZA: quando o turno tem conteúdo pessoal
+                # real, a pergunta aberta espelhada substitui a pergunta
+                # genérica — é o recurso que fazia a ELIZA parecer ouvir.
+                espejo = gerar_espejo(
+                    mensagem, self.estado, self.ctx_perfil, emocao
+                )
+                if espejo:
+                    resposta_empatica = aplicar_espejo(resposta_empatica, espejo)
+                    follow = None  # já há pergunta aberta contextualizada
+                # Regista a pergunta pendente ANTES de atualizar o fio —
+                # assim ``atualizar_fio`` guarda-a como ``ultima_pergunta``
+                # e os "sim"/"pois" do próximo turno são lidos como elipse.
+                _f = self.estado.get("fio") or {}
+                _f["ultima_pergunta"] = follow or espejo
                 # Personalização pelo perfil: nome/assunto conhecido tornam
                 # a empatia mais humana ("Força, Carlos. ..." em vez de
                 # frases fixas impessoais).
@@ -527,20 +590,27 @@ class Jeelsia:
             # CONTINUIDADE do tema — nunca como "comando não entendido".
             tipo_antes = getattr(self, "_ultimo_tipo_resposta", None)
             if tipo_antes == "fallback":
+                # Espelho ELIZA primeiro: se o desabafo livre tem conteúdo
+                # pessoal, devolver as palavras do utilizador em pergunta
+                # aberta é mais humano que a pergunta progressiva fixa.
+                espejo = gerar_espejo(
+                    mensagem, self.estado, self.ctx_perfil, emocao
+                )
                 follow = proxima_pergunta_progressiva(self.estado)
-                if follow:
+                if espejo or follow:
                     ack = random.choice([
                         "Entendo, e continuamos por aí.",
                         "Recebo isso — vamos devagar.",
                         "Obrigado por partilhares. Segue o fio:",
                     ])
-                    resposta = f"{ack} {follow[0].lower() + follow[1:]}"
+                    pergunta = espejo or follow
+                    resposta = f"{ack} {pergunta[0].lower() + pergunta[1:]}"
                     self._ultimo_tipo_resposta = tipo = "emocao"
                     atualizar_fio(
-                        self.estado, mensagem, follow, emocao=None
+                        self.estado, mensagem, pergunta, emocao=None
                     )
                     _f = self.estado.get("fio") or {}
-                    _f["ultima_pergunta"] = follow
+                    _f["ultima_pergunta"] = pergunta
                     persistir_fio_no_topico(self.estado)
                     self._registra_turno(mensagem, "continuidade", emocao, info_topicos)
                     return obter_resposta_unica(self.estado, resposta)
