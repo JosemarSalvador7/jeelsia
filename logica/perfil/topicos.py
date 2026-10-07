@@ -102,10 +102,17 @@ TOPICOS_CONVERSACIONAIS = {
 
 
 def _classificar(mensagem_norm: str) -> str | None:
-    """Devolve a categoria temática da mensagem, ou None."""
+    """Devolve a categoria temática da mensagem, ou None.
+
+    Casa apenas com fronteiras de palavra (``\\b``): sem isto, "briga"
+    casava dentro de "obrigado" e cada agradecimento abria um tópico
+    fantasma de "relações", destruindo o fio do assunto em curso.
+    """
     melhor, melhor_score = None, 0.0
     for topico, palavras in TOPICOS_CONVERSACIONAIS.items():
-        hits = sum(1 for p in palavras if p in mensagem_norm)
+        hits = sum(1 for p in palavras
+                   if re.search(r"\b" + re.escape(p.strip()) + r"\b",
+                                mensagem_norm))
         if hits > melhor_score:
             melhor, melhor_score = topico, hits
     return melhor
@@ -133,6 +140,17 @@ def _chave_topico(mensagem: str) -> str | None:
 _MAX_TOPICOS = 3
 
 
+def _tem_ancora_emocional(estado: dict) -> bool:
+    """True se há um desabafo em curso (fio global ou sub-fio ativo)."""
+    from logica.contexto.fio import PERGUNTAS_PROGRESSIVAS
+
+    candidatos = [estado.get("fio") or {}]
+    topo = estado.get("topicos") or {}
+    if topo.get("ativo"):
+        candidatos.append((topo.get("abertos") or {}).get(topo["ativo"]) or {})
+    return any(c.get("emocao") in PERGUNTAS_PROGRESSIVAS for c in candidatos)
+
+
 def gerir_topicos(estado: dict, mensagem: str) -> dict:
     """Atualiza a pilha de tópicos do ``estado`` com a mensagem atual.
 
@@ -155,10 +173,38 @@ def gerir_topicos(estado: dict, mensagem: str) -> dict:
     """
     topo = estado.setdefault("topicos", {"ativo": None, "abertos": {}, "ordem": []})
     m = normalizar_texto(mensagem)
+
+    # Cortesia pura ("obrigado", "pois", "entendi") é reação social —
+    # nunca abre tópico; pertence ao assunto em curso.
+    if m in _SOCIAIS and topo["ativo"]:
+        return {"acao": "continua", "topico": topo["ativo"],
+                "anterior": topo["ativo"]}
+
     nova = _chave_topico(mensagem)
 
+    # Tópico-âncora emocional: enquanto há um desabafo em curso (fio com
+    # emoção ativa), frases sem categoria clara ("porque o chefe...",
+    # "e eu fiquei assim") são DETALHES do mesmo assunto — não assinam
+    # um tópico novo via palavra-chave. Sem isto, cada explicação abria
+    # um tópico fantasma e a conversa perdia o fio.
     sinal_mudanca = any(e in m for e in MUDANCA_TOPICO)
     sinal_retoma = any(e in m for e in RETOMADA_TOPICOS)
+
+    if (nova and not sinal_mudanca and not sinal_retoma
+            and topo["ativo"]
+            and not TOPICOS_CONVERSACIONAIS.get(nova)
+            and _tem_ancora_emocional(estado)):
+        return {"acao": "continua", "topico": topo["ativo"],
+                "anterior": topo["ativo"]}
+
+    # Desabafo emocional sem categoria ("estou triste", "porque sim") é
+    # REAÇÃO ao assunto em curso — não é assunto novo. Sem esta regra o
+    # fio do tópico ativo era substituído por um sub-fio vazio e a
+    # conversa perdia contexto a cada frase de sentimento.
+    if (nova is None and not sinal_mudanca and not sinal_retoma
+            and topo["ativo"] and eh_desabafo_sem_categoria(m)):
+        return {"acao": "continua", "topico": topo["ativo"],
+                "anterior": topo["ativo"]}
 
     resultado = {"acao": "continua", "topico": nova or topo["ativo"],
                  "anterior": topo["ativo"]}
@@ -217,7 +263,41 @@ def gerir_topicos(estado: dict, mensagem: str) -> dict:
 def _classificar_por_palavra(m: str, chave: str) -> bool:
     """True se a mensagem menciona palavras da categoria ``chave``."""
     palavras = TOPICOS_CONVERSACIONAIS.get(chave, [])
-    return any(p in m for p in palavras)
+    return any(re.search(r"\b" + re.escape(p.strip()) + r"\b", m)
+               for p in palavras)
+
+
+# Marcadores de desabafo pessoal: frases emocionais sem categoria clara
+# ("estou triste", "não correu bem") pertencem ao assunto em curso —
+# nunca devem abrir nem trocar tópico (seria perda de contexto).
+_DESABAFO = (
+    "estou", "tou", "sinto", "fiquei", "anda", "andai", "venho",
+    "triste", "mal", "bem", "feliz", "contente", "zangad", "raiva",
+    "cansad", "assim", "porque", "pq ", "correu", "aconteceu", "dia",
+)
+
+# Palavras de cortesia/reação social que JAMAIS assinam um tópico novo.
+_SOCIAIS = {
+    "obrigado", "obrigada", "valeu", "brigado", "agradecido", "agradecida",
+    "pois", "poise", "sim", "nao", "claro", "ok", "boa", "fixe", "entendi",
+    "percebi", "hmm", "ah", "ola", "oi", "tchau", "adeus", "isso", "nada",
+    "sei", "sabes", "mesmo", "exacto", "exato", "desculpa",
+}
+
+
+def eh_desabafo_sem_categoria(mensagem_norm: str) -> bool:
+    """True se a frase é puramente reativa/emocional (sem conteúdo temático)."""
+    m = mensagem_norm.strip()
+    if not m or len(m.split()) > 14:
+        return False
+    if _classificar(m):
+        return False
+    from logica.contexto import extrair_topico
+
+    base = extrair_topico(m)
+    if base and base not in _SKIP_TOPICOS and base not in _SOCIAIS:
+        return False  # há uma palavra de assinatura → pode ser assunto novo
+    return any(k in m for k in _DESABAFO)
 
 
 def _trazer_para_frente(topo: dict, chave: str) -> None:
@@ -251,12 +331,35 @@ def sincronizar_fio_com_topico(estado: dict, emocao: dict | None) -> None:
     sub = topo["abertos"].get(topo["ativo"])
     if sub is None:
         return
-    estado["fio"] = {
-        "emocao": sub.get("emocao"),
-        "nivel": sub.get("nivel", 0),
-        "ultima_pergunta": sub.get("ultima_pergunta"),
-        "resumo": list(sub.get("resumo", [])),
+    atual = estado.get("fio") or {}
+    # Fusão em vez de substituição: um turno sem emoção ("obrigado",
+    # "pois") não deve apagar a âncora emocional nem o resumo do fio —
+    # é isso que permite retomar o desabafo no turno seguinte. O sub-fio
+    # do tópico só entra quando está vazio (recém-aberto/retomado) ou
+    # quando traz informação mais rica que o fio global.
+    def _melhor(chave, padrao):
+        v_sub, v_atual = sub.get(chave), atual.get(chave)
+        if isinstance(padrao, list):
+            v_sub = list(v_sub or [])
+            v_atual = list(v_atual or [])
+            return v_sub if len(v_sub) >= len(v_atual) else v_atual
+        return v_atual or v_sub or padrao
+
+    novo_fio = {
+        "emocao": _melhor("emocao", None),
+        "nivel": max(int(sub.get("nivel", 0) or 0),
+                     int(atual.get("nivel", 0) or 0)),
+        "ultima_pergunta": _melhor("ultima_pergunta", None),
+        "resumo": _melhor("resumo", []),
     }
+    # Emoção explícita deste turno tem prioridade sobre ambas as fontes
+    if emocao and emocao.get("dominante") not in (None, "neutro"):
+        if emocao["dominante"] != novo_fio["emocao"]:
+            novo_fio["emocao"] = emocao["dominante"]
+            novo_fio["nivel"] = 0
+        else:
+            novo_fio["nivel"] = atual.get("nivel", sub.get("nivel", 0)) or 0
+    estado["fio"] = novo_fio
 
 
 def persistir_fio_no_topico(estado: dict) -> None:

@@ -120,21 +120,26 @@ def manter_contexto(estado: dict, mensagem: str) -> bool:
 
 
 def obter_resposta_unica(estado: dict, resposta: str) -> str:
-    """Garante que a resposta não seja repetida recentemente."""
+    """Garante que a resposta não seja repetida recentemente.
+
+    A janela de comparação é curta (4): o suficiente para evitar eco
+    imediato, sem sufocar a variação natural quando o assistente usa
+    mecânicas de fio (elipses/retomadas) que já sorteiam moldes.
+    """
     ultimas = estado["ultimas_respostas"]
 
     if resposta in ultimas:
         # Tenta variação ou resposta alternativa
         variacoes = [
-            f"{resposta} (já disse isso antes, mas reforço novamente!)",
-            f"Como já tinha mencionado antes: {resposta}",
-            f"Relembrando o que já falamos: {resposta}",
-            f"Como te disse anteriormente: {resposta}",
+            f"{resposta} E reitero: estou aqui.",
+            f"Como dizia: {resposta}",
+            f"Retomando — {resposta[0].lower() + resposta[1:]}",
+            f"Insisto no que te disse: {resposta}",
         ]
         return random.choice(variacoes)
     else:
         ultimas.append(resposta)
-        if len(ultimas) > estado["max_historico_respostas"]:
+        if len(ultimas) > min(estado["max_historico_respostas"], 4):
             ultimas.pop(0)
         return resposta
 
