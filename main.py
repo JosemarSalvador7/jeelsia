@@ -14,6 +14,16 @@ from logica import (
     padroes_conversa,
     sem_resposta,
 )
+# Novos módulos: utilitários de texto, emoções e contexto da conversa
+from logica.utils import normalizar_texto, analisar_similaridade
+from logica.emocoes import detectar_emocao, responder_com_empatia
+from logica.contexto import (
+    criar_estado,
+    extrair_topico,
+    manter_contexto,
+    obter_resposta_unica,
+    aplicar_reflections,
+)
 # Configurações iniciais
 sys.dont_write_bytecode = True
 
@@ -52,43 +62,15 @@ class Jeelsia:
         self.ultima_interacao = time.time()
         self.ativo = True
         self.evento_terminar = threading.Event()
-        
-        # Memória de últimas respostas para evitar repetição
-        self.ultimas_respostas = []
-        self.max_historico_respostas = 5
-        
-        # Memória de contexto da conversa
-        self.historico_conversa = []
-        self.max_historico = 10
-        
-        # Último tópico discutido
-        self.ultimo_topico = None
-        
-        # Reflexões para inverter pronomes (espelhamento)
-        self.reflections = {
-            "eu": "você",
-            "meu": "seu",
-            "minha": "sua",
-            "me": "te",
-            "estou": "está",
-            "sinto": "sente",
-            "quero": "quer",
-            "preciso": "precisa",
-            "vou": "vai",
-            "posso": "pode",
-            "tenho": "tem",
-            "estava": "estava",
-            "fui": "foi",
-            "faz": "faz",
-            "sei": "sabe",
-            "acho": "acha",
-            "penso": "pensa",
-            "gosto": "gosta",
-            "adoro": "adora",
-            "amo": "ama",
-            "queria": "queria",
-            "precisava": "precisava"
-        }
+
+        # Estado de contexto/memória (gerido pelo módulo logica.contexto)
+        self.estado = criar_estado()
+        # Atalhos compatíveis com o resto do código
+        self.ultimas_respostas = self.estado["ultimas_respostas"]
+        self.max_historico_respostas = self.estado["max_historico_respostas"]
+        self.historico_conversa = self.estado["historico_conversa"]
+        self.max_historico = self.estado["max_historico"]
+        self.ultimo_topico = self.estado["ultimo_topico"]
 
         try:
             self.prefixos_factuais = prefixos_factuais()
@@ -112,169 +94,35 @@ class Jeelsia:
         except Exception as e:
             print(f"Erro ao iniciar monitoramento: {e}")
 
+    # ------------------------------------------------------------------
+    # Estas funções foram movidas para módulos próprios (logica.emocoes e
+    # logica.contexto). Mantemos aqui delegadores finos por compatibilidade.
+    # ------------------------------------------------------------------
+
     def _detectar_emocao(self, texto: str) -> dict:
-        """Detecta emoções no texto do usuário"""
-        emocao = {
-            "tristeza": 0,
-            "alegria": 0,
-            "raiva": 0,
-            "medo": 0,
-            "surpresa": 0,
-            "neutro": 0
-        }
-        
-        texto_lower = texto.lower()
-        
-        # Palavras-chave por emoção
-        palavras_tristeza = ["triste", "chateado", "mal", "deprimido", "desanimado", "frustrado", "saudade", "chorar", "sofrendo", "pior", "difícil", "cansado", "esgotado", "desiludido", "melancólico", "abatido"]
-        palavras_alegria = ["feliz", "alegre", "bem", "ótimo", "excelente", "maravilhoso", "incrível", "animado", "contente", "radiante", "top", "perfeito", "bom", "alegria", "sorriso", "felicidade", "realizado"]
-        palavras_raiva = ["raiva", "bravo", "irritado", "nervoso", "pistola", "furioso", "estressado", "ódio", "puto", "injusto", "revoltado", "indignado", "aborrecido", "enfurecido"]
-        palavras_medo = ["medo", "preocupado", "ansioso", "inseguro", "receio", "temeroso", "apreensivo", "nervoso", "angustiado", "aflito", "assustado", "com medo"]
-        palavras_surpresa = ["uau", "nossa", "caramba", "que legal", "incrível", "sensacional", "fantástico", "surpresa", "nunca", "impossível", "inacreditável", "espantado", "pasmo"]
-        
-        for palavra in palavras_tristeza:
-            if palavra in texto_lower:
-                emocao["tristeza"] += 1
-        for palavra in palavras_alegria:
-            if palavra in texto_lower:
-                emocao["alegria"] += 1
-        for palavra in palavras_raiva:
-            if palavra in texto_lower:
-                emocao["raiva"] += 1
-        for palavra in palavras_medo:
-            if palavra in texto_lower:
-                emocao["medo"] += 1
-        for palavra in palavras_surpresa:
-            if palavra in texto_lower:
-                emocao["surpresa"] += 1
-        
-        # Se nenhuma emoção detectada
-        if sum(emocao.values()) == 0:
-            emocao["neutro"] = 1
-        
-        # Normalizar para percentuais
-        total = sum(emocao.values())
-        for key in emocao:
-            emocao[key] = (emocao[key] / total) * 100 if total > 0 else 0
-            
-        # Encontrar emoção dominante
-        emocao["dominante"] = max(emocao, key=emocao.get)
-        
-        return emocao
+        """Detecta emoções no texto do usuário (ver logica.emocoes)."""
+        return detectar_emocao(texto)
 
     def _responder_com_empatia(self, emocao: dict, mensagem: str) -> str | None:
-        """Gera resposta com base na emoção detectada"""
-        dominante = emocao["dominante"]
-        
-        # Só responde com empatia se a emoção for forte (>40%)
-        if emocao[dominante] < 40:
-            return None
-        
-        respostas_empaticas = {
-            "tristeza": [
-                "Percebo que estás a sentir-te triste. Queres conversar sobre isso? Estou aqui para ouvir.",
-                "Sinto muito que estejas triste. Às vezes partilhar ajuda. O que está a acontecer?",
-                "Entendo que estejas a passar por um momento difícil. Podes contar comigo para desabafar.",
-                "A tristeza faz parte da vida, mas não precisas de a carregar sozinho. Queres falar sobre o que te preocupa?",
-                "Percebo a tua tristeza. Lembra-te que também há dias bons a caminho. Queres conversar?",
-                "Ah, sinto muito. Estou aqui para te ouvir, sempre que precisares desabafar."
-            ],
-            "alegria": [
-                "Que bom ver-te tão feliz! Conta-me o que te deixou assim tão radiante.",
-                "A tua alegria é contagiante! O que está a acontecer de tão bom?",
-                "Fico muito feliz por ti! Partilha essa energia positiva comigo.",
-                "Uau, que energia boa! É tão bom ver alguém tão feliz. Conta-me mais!",
-                "Que maravilha! Ver-te assim alegre faz o meu dia melhor também!",
-                "Essa alegria é linda! O que te deixou tão radiante hoje?"
-            ],
-            "raiva": [
-                "Entendo que estejas irritado. Respira fundo e, quando quiseres, podes contar-me o que aconteceu.",
-                "Às vezes a raiva é justa, mas precisamos de processá-la. Queres desabafar?",
-                "Percebo a tua frustração. Vamos respirar juntos e, se quiseres, conversar sobre isso.",
-                "É normal sentir raiva às vezes. Estou aqui para ouvir e ajudar se puder.",
-                "Entendo que estejas chateado. Quando te sentires pronto, podes contar-me tudo.",
-                "A raiva é uma emoção válida. Queres falar sobre o que te deixou assim?"
-            ],
-            "medo": [
-                "Entendo que possas estar com medo ou preocupado. Queres partilhar o que te deixa assim?",
-                "O medo é uma emoção natural. Estou aqui para te ouvir e, juntos, podemos pensar sobre isso.",
-                "Percebo a tua ansiedade. Respira comigo e, quando estiveres pronto, podes falar sobre isso.",
-                "Não precisas de enfrentar os teus medos sozinho. Estou aqui para te apoiar.",
-                "Sei que o medo pode ser paralisante. Queres conversar sobre o que te preocupa?",
-                "É normal sentir medo. Estou aqui para te ajudar a enfrentá-lo, se quiseres."
-            ],
-            "surpresa": [
-                "Uau, parece que algo te surpreendeu! Conta-me o que aconteceu!",
-                "Percebo a tua surpresa! São esses momentos que tornam a vida interessante.",
-                "Que reação incrível! Partilha essa surpresa comigo.",
-                "Também fico surpresa quando algo me tira do eixo. Conta-me tudo!",
-                "Adoro ver essa surpresa! O que foi que te deixou assim tão espantado?",
-                "Essa surpresa é contagiante! Partilha comigo o que aconteceu!"
-            ],
-            "neutro": None
-        }
-        
-        if dominante in respostas_empaticas and respostas_empaticas[dominante]:
-            return random.choice(respostas_empaticas[dominante])
-        return None
+        """Gera resposta empática conforme a emoção (ver logica.emocoes)."""
+        return responder_com_empatia(emocao, mensagem)
 
     def _aplicar_reflections(self, texto: str) -> str:
-        """Aplica reflexões para inverter pronomes"""
-        palavras = texto.split()
-        for i, palavra in enumerate(palavras):
-            palavra_limpa = palavra.lower().strip('.,!?')
-            if palavra_limpa in self.reflections:
-                # Preservar capitalização
-                if palavra[0].isupper():
-                    palavras[i] = self.reflections[palavra_limpa].capitalize()
-                else:
-                    palavras[i] = self.reflections[palavra_limpa]
-        return ' '.join(palavras)
+        """Aplica reflexões para inverter pronomes (ver logica.contexto)."""
+        return aplicar_reflections(texto)
 
     def _obter_resposta_unica(self, resposta: str) -> str:
-        """Garante que a resposta não seja repetida recentemente"""
-        if resposta in self.ultimas_respostas:
-            # Tenta variação ou resposta alternativa
-            variacoes = [
-                f"{resposta} (já disse isso antes, mas reforço novamente!)",
-                f"Como já tinha mencionado antes: {resposta}",
-                f"Relembrando o que já falamos: {resposta}",
-                f"Como te disse anteriormente: {resposta}"
-            ]
-            return random.choice(variacoes)
-        else:
-            self.ultimas_respostas.append(resposta)
-            if len(self.ultimas_respostas) > self.max_historico_respostas:
-                self.ultimas_respostas.pop(0)
-            return resposta
+        """Evita respostas repetidas recentemente (ver logica.contexto)."""
+        return obter_resposta_unica(self.estado, resposta)
 
     def _extrair_topico(self, mensagem: str) -> str | None:
-        """Extrai tópico principal da mensagem"""
-        # Remove palavras comuns e mantém substantivos principais
-        palavras = mensagem.lower().split()
-        stopwords = ["o", "a", "os", "as", "um", "uma", "uns", "umas", "de", "da", "do", "das", "dos", "para", "com", "por", "em", "na", "no", "que", "se", "é", "são", "está", "estão"]
-        topicos = [p for p in palavras if p not in stopwords and len(p) > 3]
-        return topicos[0] if topicos else None
+        """Extrai o tópico principal da mensagem (ver logica.contexto)."""
+        return extrair_topico(mensagem)
 
     def _manter_contexto(self, mensagem: str) -> bool:
-        """Mantém contexto da conversa"""
-        # Se não há histórico, adiciona
-        if not self.historico_conversa:
-            self.historico_conversa.append(mensagem)
-            return False
-        
-        # Verifica se a mensagem se relaciona com o último tópico
-        topico_atual = self._extrair_topico(mensagem)
-        ultimo_topico = self._extrair_topico(self.historico_conversa[-1]) if self.historico_conversa else None
-        
-        if topico_atual and ultimo_topico and topico_atual == ultimo_topico:
-            return True
-        
-        # Adiciona ao histórico
-        self.historico_conversa.append(mensagem)
-        if len(self.historico_conversa) > self.max_historico:
-            self.historico_conversa.pop(0)
-        return False
+        """Mantém o contexto da conversa (ver logica.contexto)."""
+        return manter_contexto(self.estado, mensagem)
+
 
     def _responder_palavras_curtas(self, mensagem: str) -> str | None:
         """Responde a palavras curtas como 'sim', 'não', etc."""
@@ -447,7 +295,7 @@ class Jeelsia:
                 ultima_msg = self.historico_conversa[-1]
             
             # Extrai o assunto da última mensagem
-            assunto = self._extrair_topico(ultima_msg) if ultima_msg else "conversa"
+            assunto = extrair_topico(ultima_msg) if ultima_msg else "conversa"
             
             # Respostas personalizadas com contexto
             respostas_contexto = [
@@ -493,16 +341,16 @@ class Jeelsia:
                     "Parece que o comando ficou em branco. O que gostaria de fazer ou perguntar?"
                 ])
 
-            # Detecta emoção
-            emocao = self._detectar_emocao(mensagem)
-            
-            # Resposta empática se houver emoção forte
-            resposta_empatica = self._responder_com_empatia(emocao, mensagem)
-            if resposta_empatica:
-                return self._obter_resposta_unica(resposta_empatica)
+            # Detecta emoção (lógica movida para logica.emocoes)
+            emocao = detectar_emocao(mensagem)
 
-            # Mantém contexto
-            self._manter_contexto(mensagem)
+            # Resposta empática se houver emoção forte
+            resposta_empatica = responder_com_empatia(emocao, mensagem)
+            if resposta_empatica:
+                return obter_resposta_unica(self.estado, resposta_empatica)
+
+            # Mantém contexto (lógica movida para logica.contexto)
+            manter_contexto(self.estado, mensagem)
 
             # Verifica comandos especiais de saída
             if mensagem.lower() in ["sair", "fechar", "terminar", "exit", "quit"]:
@@ -515,11 +363,11 @@ class Jeelsia:
             
             # Aplica reflexões se for uma pergunta sobre o usuário
             if resposta and ("você" in resposta or "tu" in resposta or "te" in resposta):
-                resposta = self._aplicar_reflections(resposta)
-            
+                resposta = aplicar_reflections(resposta)
+
             # Evita repetição
             if resposta:
-                resposta = self._obter_resposta_unica(resposta)
+                resposta = obter_resposta_unica(self.estado, resposta)
             
             return resposta if resposta else "Desculpa, não entendi. Podes reformular?"
 
@@ -575,7 +423,7 @@ class Jeelsia:
             listas = self.padroes_conversa
 
             # Saudações
-            if self._analise_similaidade(comando_lower, listas["saudacao"]):
+            if analisar_similaridade(comando_lower, listas["saudacao"]):
                 try:
                     agora = datetime.now()
                     if agora.hour < 12:
@@ -607,7 +455,7 @@ class Jeelsia:
                     return "Olá! Como posso ajudar?"
 
             # Horas
-            if self._analise_similaidade(comando_lower, listas["horas"]):
+            if analisar_similaridade(comando_lower, listas["horas"]):
                 try:
                     hora_atual = datetime.now()
                     hora = hora_atual.strftime("%H:%M")
@@ -617,7 +465,7 @@ class Jeelsia:
                     return "Não consegui obter a hora atual."
 
             # Fome
-            if self._analise_similaidade(comando_lower, listas["fome"]):
+            if analisar_similaridade(comando_lower, listas["fome"]):
                 try:
                     agora = datetime.now()
                     hora = agora.hour
@@ -667,7 +515,7 @@ class Jeelsia:
                     return "Que tal comer algo? Eu recomendaria uma refeição saudável!"
 
             # Piadas
-            if self._analise_similaidade(comando_lower, listas["humor"]):
+            if analisar_similaridade(comando_lower, listas["humor"]):
                 try:
                     return random.choice(listas["piada"])
                 except (KeyError, IndexError) as e:
@@ -675,7 +523,7 @@ class Jeelsia:
                     return "Não tenho piadas disponíveis agora."
 
             # Identidade
-            if self._analise_similaidade(comando_lower, listas["identidade"]):
+            if analisar_similaridade(comando_lower, listas["identidade"]):
                 return random.choice([
                     f"Eu sou {self.personalidade['nome']}, a tua assistente virtual!",
                     "Sou otimista, curiosa e sempre pronta para ajudar!",
@@ -723,7 +571,7 @@ class Jeelsia:
 
             for chave, valor in comandos_mapeados.items():
                 try:
-                    if self._analise_similaidade(comando_lower, valor[0]):
+                    if analisar_similaridade(comando_lower, valor[0]):
                         # Se for um elogio, usa resposta com contexto
                         if chave == "elogio" and self.historico_conversa:
                             return self._responder_elogio_com_contexto(comando, valor[1])
@@ -733,11 +581,11 @@ class Jeelsia:
                     continue
 
             # Data/Hora
-            if self._analise_similaidade(comando_lower, listas["data"]):
+            if analisar_similaridade(comando_lower, listas["data"]):
                 return self._mostrar_data_hora()
 
             # Conselho
-            if self._analise_similaidade(comando_lower, listas["conselho"]):
+            if analisar_similaridade(comando_lower, listas["conselho"]):
                 try:
                     self._mostrar_mensagem_busca()
                     conselhos = self.kb.pesquisar_conselhos_qradio("", limite=3)
@@ -844,36 +692,6 @@ class Jeelsia:
                 time.sleep(0.5)
         except Exception:
             pass
-
-    def _analise_similaidade(
-        self, frase: str, lista: list, threshold=90
-    ) -> bool | None:
-        """Analisa similaridade entre frase e itens da lista"""
-        try:
-            if not lista:
-                return False
-
-            frase = self._normalizar_texto(frase)
-            for linha in lista:
-                try:
-                    if fuzz.QRatio(f"{frase}", f"{linha}") >= threshold:
-                        return True
-                    if fuzz.token_sort_ratio(f"{frase}", f"{linha}") >= 90:
-                        return True
-                except Exception:
-                    continue
-            return False
-        except Exception:
-            return False
-
-    def _normalizar_texto(self, texto: str) -> str:
-        """Normaliza texto removendo caracteres especiais"""
-        try:
-            texto = re.sub(r"[^\w\s]", "", texto)
-            texto = re.sub(r"\s{2,}", " ", texto)
-            return texto.lower().strip()
-        except Exception:
-            return texto.lower().strip() if texto else ""
 
     def _mostrar_data_hora(self) -> str:
         """Mostra data e hora detalhadas"""

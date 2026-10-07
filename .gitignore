@@ -1,6 +1,1 @@
-*.pyc
-*.pyo
-__pycache__/
-.venv
-cerebro.db
-*.db
+(empty)
