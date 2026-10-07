@@ -250,6 +250,72 @@ def detectar_intencoes(mensagem: str, listas: dict) -> list[tuple[str, int]]:
     return encontrados
 
 
+# ----------------------------------------------------------------------
+# Intenções conversacionais "pequenas" (turnos sociais curtos)
+# ----------------------------------------------------------------------
+# Quando nenhuma variação da lista casa com threshold alto, estas
+# intenções ainda merecem uma 2ª chance com score moderado — são os
+# turnos sociais que faziam a Jeelsia cair em "não aprendi a lidar
+# com isso" ("tudo e com voce", "estou bem e você?").
+INTENCOES_SOCIAIS = {
+    "saudacao", "estado", "good_state_user", "sad_state_user",
+    "agradecimento", "elogio", "despedida",
+}
+
+
+def melhor_score_intencao(frase: str, chaves: list) -> tuple[int, str]:
+    """Devolve (score máximo, chave mais parecida) para uma lista de padrões."""
+    from rapidfuzz import fuzz
+
+    melhor, melhor_chave = 0, ""
+    for k in chaves:
+        try:
+            s = max(fuzz.QRatio(frase, k), fuzz.token_sort_ratio(frase, k))
+        except Exception:
+            continue
+        if s > melhor:
+            melhor, melhor_chave = int(s), k
+    return melhor, melhor_chave
+
+
+def casar_social_flexivel(
+    comando_lower: str, listas: dict, floor: int = 62
+) -> tuple[str, str] | None:
+    """Casa mensagens sociais pequenas com score moderado.
+
+    Um humano não responde "não entendi" a "e contigo?" — o mínimo de
+    elegância é devolvê-la à intenção social mais próxima. Só entra em
+    intenções sociais (nunca em factos/conhecimento, onde um casamento
+    parcial produziria respostas erradas).
+    """
+    from logica.utils.texto import normalizar_texto
+
+    frase = normalizar_texto(comando_lower)
+    if not frase or len(frase.split()) > 8:
+        return None
+
+    melhor_nome, melhor_s = None, 0
+    melhor_respostas: list | None = None
+    for nome, entrada in listas.items():
+        if nome not in INTENCOES_SOCIAIS:
+            continue
+        if not isinstance(entrada, list) or not entrada:
+            continue
+        chaves = entrada[0] if isinstance(entrada[0], list) else entrada
+        respostas = entrada[1] if (
+            isinstance(entrada[0], list) and len(entrada) > 1
+            and isinstance(entrada[1], list)) else None
+        if not respostas:
+            continue
+        s, _ = melhor_score_intencao(frase, chaves)
+        if s > melhor_s:
+            melhor_nome, melhor_s = nome, s
+            melhor_respostas = respostas
+    if melhor_nome and melhor_s >= floor:
+        return melhor_nome, random.choice(melhor_respostas)
+    return None
+
+
 def responder_a_intencao_esperando_resposta(anterior: str | None) -> bool:
     """Heurística simples: a última resposta da IA terminava em pergunta?"""
     return bool(anterior and anterior.rstrip().endswith("?"))

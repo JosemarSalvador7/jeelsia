@@ -157,6 +157,26 @@ def detectar_emocao(texto: str) -> dict:
 
     texto_lower = texto.lower()
 
+    # ---- Filtro de cortesia -------------------------------------------
+    # "oi, tudo bem?" e "estou bem e você?" contêm "bem", mas são saudações
+    # / devolução de pergunta — não declaração de alegria. Sem este filtro,
+    # a empatia de alegria monopolizava o turno e o padrão "estado" (que
+    # responde corretamente "Tudo ótimo! E contigo?") nunca era alcançado.
+    saudacao_sozinha = bool(re.fullmatch(
+        r"\s*(oi+|ola|olá|eai|e aí|eae|hey|salve|opa|tchau|adeus)\s*[?!.]*\s*",
+        texto_lower))
+    devolve_pergunta_cortesia = bool(re.search(
+        r"\b(tudo\s+bem|tudo\s+bom|como\s+(vc|voc[eê]|você|tu|está|estas|estás)[\s?!]*)\b[?\s!]*$",
+        texto_lower)) and not re.search(
+        r"\b(estou|to|tô|estamos|anda|vá|vai)\s+(mesmo|inclusive|ainda)\b", texto_lower)
+    if saudacao_sozinha or devolve_pergunta_cortesia:
+        emocao["neutro"] = 1
+        emocao["dominante"] = "neutro"
+        emocao["_brutos"] = {"neutro": 1}
+        emocao["_negado"] = False
+        emocao["_primeira_pessoa"] = False
+        return emocao
+
     emocao["tristeza"] = _pontuar(texto_lower, PALAVRAS_TRISTEZA)
     emocao["alegria"] = _pontuar(texto_lower, PALAVRAS_ALEGRIA)
     emocao["raiva"] = _pontuar(texto_lower, PALAVRAS_RAIVA)
