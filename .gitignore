@@ -2,5 +2,5 @@
 __pycache__/
 *.pyc
 
-# Database files
-cerebro.db
+# Logs and temp files
+*.log

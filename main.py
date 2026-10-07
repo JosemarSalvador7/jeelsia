@@ -28,6 +28,15 @@ from logica.contexto import (
     obter_resposta_unica,
     aplicar_reflections,
 )
+# Fio condutor: desenvolve a conversa sem perder o contexto entre turnos
+from logica.contexto.fio import (
+    PERGUNTAS_PROGRESSIVAS as PERGUNTAS_EMOÇÕES_FIO,
+    atualizar_fio,
+    encerrar_fio_se_despedida,
+    proxima_pergunta_progressiva,
+    responder_elipse,
+    retomar_fio,
+)
 # Módulo de comunicação: fluidez e naturalidade das respostas
 from logica.comunicacao import (
     gerar_transicao,
@@ -307,12 +316,17 @@ class Jeelsia:
     def responder(self, mensagem: str) -> str:
         """Método principal para processar e responder mensagens.
 
-        Fluxo com comunicação fluida (logica.comunicacao):
+        Fluxo com comunicação fluida (logica.comunicacao) e fio condutor
+        (logica.contexto.fio) para desenvolver a conversa sem perder contexto:
         1. Mensagens vazias → convite amigável;
-        2. Emoção forte → empatia + seguimento (conversa, não monólogo);
-        3. Mensagens longas → reconhecimento de que a IA "ouviu";
-        4. Resposta normal → composta com transição/pergunta de seguimento
-           para manter o ritmo natural da conversa.
+        2. Emoção forte → empatia + pergunta progressiva (desenvolve o tema);
+        3. Mensagem vaga ("pois", "hmm") com fio ativo → retoma o desabafo;
+        4. Elipse ("sim"/"não" respondendo à última pergunta da IA) → o fio
+           reconhece a referência implícita e continua o assunto;
+        5. Resposta normal → composta com transição/pergunta de seguimento;
+        6. No fim de cada turno, ``atualizar_fio`` regista emoção ativa,
+           última pergunta aberta e memória curta — é isto que permite à
+           conversa "lembrar-se" de onde ficou.
         """
         try:
             if not mensagem or not mensagem.strip():
@@ -332,6 +346,26 @@ class Jeelsia:
             manter_contexto(self.estado, mensagem)
             self.estado["turnos"] = self.estado.get("turnos", 0) + 1
 
+            # Encerrar o fio emocional quando o utilizador fecha o tema
+            encerrar_fio_se_despedida(self.estado, mensagem)
+
+            # ---- Fio condutor: elipses e retomadas -------------------
+            # "sim"/"pois" respondendo a uma pergunta anterior da IA não
+            # são comandos isolados — são continuidade. O fio resolve a
+            # referência implícita e desenvolve o tema em vez de cair no
+            # menu fixo de palavras curtas.
+            elipse = responder_elipse(self.estado, mensagem)
+            if elipse:
+                atualizar_fio(self.estado, mensagem, elipse, emocao=None)
+                return obter_resposta_unica(self.estado, elipse)
+
+            # Mensagem vaga ("hmm", "ah", "entendi") com desabafo pendente
+            # → retomar o fio ativo, citando a última frase relevante.
+            retomada = retomar_fio(self.estado, mensagem)
+            if retomada:
+                atualizar_fio(self.estado, mensagem, retomada, emocao=None)
+                return obter_resposta_unica(self.estado, retomada)
+
             # Resposta empática: tem PRIORIDADE quando o utilizador fala
             # de si com emoção forte ("estou mal", "não correu bem"),
             # mesmo que um padrão genérico também coincida. Quando a
@@ -349,12 +383,18 @@ class Jeelsia:
                     self.estado["ultima_emocao"] = emocao["dominante"]
 
             if resposta_empatica:
-                seguimento = gerar_pergunta_seguimento(self.estado, "emocao")
-                if seguimento and not resposta_empatica.rstrip().endswith("?"):
-                    resposta_empatica = f"{resposta_empatica} {seguimento}"
-                elif not resposta_empatica.rstrip().endswith("?"):
-                    resposta_empatica = f"{resposta_empatica} Queres contar-me mais?"
-                return obter_resposta_unica(self.estado, resposta_empatica)
+                # Desenvolvimento do tema: em vez de rematar sempre com a
+                # mesma pergunta genérica, usa a próxima pergunta
+                # progressiva do fio (causa → tempo → gatilho → apoio).
+                follow = proxima_pergunta_progressiva(self.estado)
+                if not resposta_empatica.rstrip().endswith("?"):
+                    if not follow:
+                        follow = gerar_pergunta_seguimento(self.estado, "emocao")
+                    if follow:
+                        resposta_empatica = f"{resposta_empatica} {follow}"
+                resposta_final = obter_resposta_unica(self.estado, resposta_empatica)
+                atualizar_fio(self.estado, mensagem, resposta_final, emocao)
+                return resposta_final
 
             # Verifica comandos especiais de saída
             if mensagem.lower() in ["sair", "fechar", "terminar", "exit", "quit"]:
@@ -368,11 +408,53 @@ class Jeelsia:
             # Processa o comando
             resposta = self._processar_comando(mensagem)
 
+            # Fio condutor: se o turno não casou em nenhuma intenção mas
+            # há um desabafo ativo, a mensagem livre é tratada como
+            # CONTINUIDADE do tema — nunca como "comando não entendido".
+            tipo_antes = getattr(self, "_ultimo_tipo_resposta", None)
+            if tipo_antes == "fallback":
+                follow = proxima_pergunta_progressiva(self.estado)
+                if follow:
+                    ack = random.choice([
+                        "Entendo, e continuamos por aí.",
+                        "Recebo isso — vamos devagar.",
+                        "Obrigado por partilhares. Segue o fio:",
+                    ])
+                    resposta = f"{ack} {follow[0].lower() + follow[1:]}"
+                    self._ultimo_tipo_resposta = tipo = "emocao"
+                    atualizar_fio(
+                        self.estado, mensagem, follow, emocao=None
+                    )
+                    _f = self.estado.get("fio") or {}
+                    _f["ultima_pergunta"] = follow
+                    return obter_resposta_unica(self.estado, resposta)
+
             # Fluidez contextual: se a intenção casada era genérica mas o
             # utilizador demonstrou emoção neste turno (ex.: "estou bem,
             # obrigado" após um dia mau), emendar com continuidade em vez
             # de responder como se nada tivesse acontecido.
             tipo = getattr(self, "_ultimo_tipo_resposta", None)
+
+            # Fio condutor: quando há um desabafo emocional pendente e o
+            # turno atual é apenas social (obrigado/saudação/estado), a
+            # resposta deve RETOMAR o fio — nunca encerrar o assunto como
+            # se a conversa começasse do zero.
+            fio = self.estado.get("fio") or {}
+            if (
+                resposta
+                and tipo in ("agradecimento", "saudacao", "estado", "palavra_curta", None)
+                and fio.get("emocao") in PERGUNTAS_EMOÇÕES_FIO
+            ):
+                ponte = random.choice([
+                    "Antes de mais, retomando o que estavas a contar:",
+                    "Sobre o que mencionaste há pouco,",
+                    "Não quero deixar o teu desabafo em suspenso —",
+                ])
+                follow = proxima_pergunta_progressiva(self.estado)
+                if follow:
+                    resposta = f"{resposta} {ponte} {follow[0].lower() + follow[1:]}"
+                    self._ultimo_tipo_resposta = tipo = "emocao"
+
             if (
                 resposta
                 and emocao.get("dominante") in ("tristeza", "raiva", "medo")
@@ -403,6 +485,10 @@ class Jeelsia:
             # Evita repetição
             if resposta:
                 resposta = obter_resposta_unica(self.estado, resposta)
+
+            # Atualiza o fio condutor no fim do turno — é isto que permite
+            # à conversa "lembrar-se" do tema/emoção pendente no próximo.
+            atualizar_fio(self.estado, mensagem, resposta, emocao)
 
             return resposta if resposta else "Desculpa, não entendi. Podes reformular?"
 
@@ -616,6 +702,7 @@ class Jeelsia:
             for chave, valor in comandos_mapeados.items():
                 try:
                     if analisar_similaridade(comando_lower, valor[0]):
+                        self._ultimo_tipo_resposta = chave
                         # Se for um elogio, usa resposta com contexto
                         if chave == "elogio" and self.historico_conversa:
                             return self._responder_elogio_com_contexto(comando, valor[1])
