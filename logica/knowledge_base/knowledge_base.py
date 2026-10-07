@@ -22,7 +22,24 @@ class KnowledgeBase:
         self.conn.commit()
         self.cursor = self.conn.cursor()  # Move para antes de criar tabelas
         self.criar_tabelas()
+        self._criar_tabelas_perfil()
         self.carregar_dados_em_memoria()
+
+    def _criar_tabelas_perfil(self) -> None:
+        """Garante as tabelas de perfil/histórico do utilizador no mesmo DB.
+
+        O DDL vive em ``logica.perfil``; aqui apenas asseguramos que a
+        base de dados nasce com a tabela ``perfil_utilizador`` (dados do
+        utilizador para gerar melhores respostas) e ``historico_conversas``.
+        """
+        from logica.perfil.perfil import DDL_PERFIL
+
+        self.conn.executescript(DDL_PERFIL)
+        # linha de perfil padrão (utilizador local)
+        self.conn.execute(
+            "INSERT OR IGNORE INTO perfil_utilizador (id) VALUES (1)"
+        )
+        self.conn.commit()
 
     def criar_tabelas(self) -> None:
         cursor = self.conn.cursor()

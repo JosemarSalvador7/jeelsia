@@ -48,6 +48,21 @@ from logica.comunicacao import (
     detectar_intencoes,
 )
 from logica.comunicacao.fluidez import compor_resposta
+# Perfil do utilizador (tabela SQLite) + conversa multi-assunto
+from logica.perfil import (
+    PerfilUtilizador,
+    contexto_pessoal,
+    extrair_informacoes,
+    personalizar_resposta,
+)
+from logica.perfil.perfil import saudação_com_perfil, sugestao_por_gostos
+from logica.perfil.topicos import (
+    gerir_topicos,
+    persistir_fio_no_topico,
+    sincronizar_fio_com_topico,
+    transicao_natural,
+)
+import uuid as _uuid
 # Configurações iniciais
 sys.dont_write_bytecode = True
 
@@ -113,6 +128,18 @@ class Jeelsia:
             print(f"Erro ao listar tópicos: {e}")
             self.fact_knowledge_list = []
 
+        # Perfil do utilizador — tabela `perfil_utilizador` no cerebro.db.
+        # Guarda nome, preferências, humor e histórico de assuntos para
+        # gerar respostas mais personalizadas entre sessões.
+        try:
+            self.perfil = PerfilUtilizador(self.kb.conn)
+            self.ctx_perfil = contexto_pessoal(self.perfil)
+        except Exception as e:
+            print(f"Erro ao inicializar perfil do utilizador: {e}")
+            self.perfil = None
+            self.ctx_perfil = {}
+        self.sessao_id = _uuid.uuid4().hex[:8]
+
         try:
             threading.Thread(target=self._monitorar_inatividade, daemon=True).start()
         except Exception as e:
@@ -156,6 +183,51 @@ class Jeelsia:
         natural à conversa em vez de despejar frases fixas.
         """
         return gerar_resposta_curta(mensagem, self.estado)
+
+    # ------------------------------------------------------------------
+    # Auxiliares de perfil (tabela perfil_utilizador / historico_conversas)
+    # ------------------------------------------------------------------
+
+    def _registra_turno(self, mensagem: str, intencao: str | None,
+                        emocao: dict | None, info_topicos: dict) -> None:
+        """Persiste o turno na tabela ``historico_conversas`` e atualiza
+        o último assunto do perfil — memória entre sessões."""
+        if not self.perfil:
+            return
+        try:
+            dom = (emocao or {}).get("dominante")
+            topico = info_topicos.get("topico") if isinstance(info_topicos, dict) else None
+            self.perfil.registrar_turno(
+                mensagem=mensagem,
+                intencao=intencao,
+                emocao=None if dom == "neutro" else dom,
+                topico=topico,
+                sessao=self.sessao_id,
+            )
+            if topico:
+                self.perfil.registar_assunto(topico)
+                self.ctx_perfil["ultimo_assunto"] = topico
+        except Exception as e:
+            print(f"Erro ao registar turno no histórico: {e}")
+
+    @staticmethod
+    def _inserir_nome(resposta: str, nome: str) -> str:
+        """Insere o nome do utilizador na primeira frase da resposta."""
+        frases = re.split(r"(?<=[.!?])\s+", resposta.strip())
+        if not frases:
+            return resposta
+        f0 = frases[0]
+        if nome.lower() in f0.lower():
+            return resposta
+        if f0.endswith("?"):
+            frases[0] = f0[:-1].rstrip(", ") + f", {nome}?"
+        elif f0.endswith("!"):
+            frases[0] = f0[:-1].rstrip(", ") + f", {nome}!"
+        elif f0.endswith("."):
+            frases[0] = f0[:-1].rstrip(", ") + f". Fico aqui contigo, {nome}."
+        else:
+            frases[0] = f"{f0}, {nome}."
+        return " ".join(frases)
 
     def _sugerir_comando_similar(self, comando: str) -> str | None:
         """Sugere comandos similares quando não entende o que o usuário disse"""
@@ -342,6 +414,32 @@ class Jeelsia:
             # Detecta emoção (lógica movida para logica.emocoes)
             emocao = detectar_emocao(mensagem)
 
+            # ---- Perfil do utilizador: aprendizagem implícita ----------
+            # "o meu nome é X", "gosto de Y", "trabalho como Z" ficam
+            # registados na tabela perfil_utilizador e são usados para
+            # personalizar as respostas deste e de próximos turnos.
+            if self.perfil:
+                try:
+                    novos = extrair_informacoes(mensagem, self.perfil)
+                    if novos:
+                        self.ctx_perfil = contexto_pessoal(self.perfil)
+                    if emocao.get("dominante") not in (None, "neutro"):
+                        self.perfil.registar_humor(emocao["dominante"])
+                        self.ctx_perfil["humor"] = emocao["dominante"]
+                except Exception as e:
+                    print(f"Erro ao atualizar perfil: {e}")
+
+            # ---- Multi-assunto: pilha de tópicos abertos ----------------
+            # Humanos conversam sobre vários assuntos e retomam-nos depois.
+            # gerir_topicos mantém até 3 fios temáticos; o fio clássico
+            # passa a operar sobre o tópico ATIVO (sincronizar_fio...).
+            info_topicos = {"acao": "continua", "topico": None, "anterior": None}
+            try:
+                info_topicos = gerir_topicos(self.estado, mensagem)
+                sincronizar_fio_com_topico(self.estado, emocao)
+            except Exception as e:
+                print(f"Erro ao gerir tópicos: {e}")
+
             # Mantém contexto ANTES de compor respostas dependentes dele
             manter_contexto(self.estado, mensagem)
             self.estado["turnos"] = self.estado.get("turnos", 0) + 1
@@ -354,9 +452,13 @@ class Jeelsia:
             # são comandos isolados — são continuidade. O fio resolve a
             # referência implícita e desenvolve o tema em vez de cair no
             # menu fixo de palavras curtas.
+            ponte_topico = transicao_natural(info_topicos, self.estado)
+
             elipse = responder_elipse(self.estado, mensagem)
             if elipse:
                 atualizar_fio(self.estado, mensagem, elipse, emocao=None)
+                persistir_fio_no_topico(self.estado)
+                self._registra_turno(mensagem, "elipse", emocao, info_topicos)
                 return obter_resposta_unica(self.estado, elipse)
 
             # Mensagem vaga ("hmm", "ah", "entendi") com desabafo pendente
@@ -364,6 +466,8 @@ class Jeelsia:
             retomada = retomar_fio(self.estado, mensagem)
             if retomada:
                 atualizar_fio(self.estado, mensagem, retomada, emocao=None)
+                persistir_fio_no_topico(self.estado)
+                self._registra_turno(mensagem, "retomada", emocao, info_topicos)
                 return obter_resposta_unica(self.estado, retomada)
 
             # Resposta empática: tem PRIORIDADE quando o utilizador fala
@@ -392,8 +496,18 @@ class Jeelsia:
                         follow = gerar_pergunta_seguimento(self.estado, "emocao")
                     if follow:
                         resposta_empatica = f"{resposta_empatica} {follow}"
+                # Personalização pelo perfil: nome/assunto conhecido tornam
+                # a empatia mais humana ("Força, Carlos. ..." em vez de
+                # frases fixas impessoais).
+                nome = self.ctx_perfil.get("nome")
+                if nome and random.random() < 0.5:
+                    resposta_empatica = self._inserir_nome(resposta_empatica, nome)
+                if ponte_topico:
+                    resposta_empatica = f"{ponte_topico} {resposta_empatica[0].lower() + resposta_empatica[1:]}"
                 resposta_final = obter_resposta_unica(self.estado, resposta_empatica)
                 atualizar_fio(self.estado, mensagem, resposta_final, emocao)
+                persistir_fio_no_topico(self.estado)
+                self._registra_turno(mensagem, "empatia", emocao, info_topicos)
                 return resposta_final
 
             # Verifica comandos especiais de saída
@@ -427,6 +541,8 @@ class Jeelsia:
                     )
                     _f = self.estado.get("fio") or {}
                     _f["ultima_pergunta"] = follow
+                    persistir_fio_no_topico(self.estado)
+                    self._registra_turno(mensagem, "continuidade", emocao, info_topicos)
                     return obter_resposta_unica(self.estado, resposta)
 
             # Fluidez contextual: se a intenção casada era genérica mas o
@@ -482,6 +598,12 @@ class Jeelsia:
             if resposta and reconhecimento:
                 resposta = f"{reconhecimento} {resposta[0].lower() + resposta[1:]}"
 
+            # ---- Ponte de multi-assunto + perfil ----------------------
+            if resposta and ponte_topico:
+                resposta = f"{ponte_topico} {resposta[0].lower() + resposta[1:]}"
+            if resposta:
+                resposta = personalizar_resposta(resposta, self.ctx_perfil, tipo)
+
             # Evita repetição
             if resposta:
                 resposta = obter_resposta_unica(self.estado, resposta)
@@ -489,6 +611,8 @@ class Jeelsia:
             # Atualiza o fio condutor no fim do turno — é isto que permite
             # à conversa "lembrar-se" do tema/emoção pendente no próximo.
             atualizar_fio(self.estado, mensagem, resposta, emocao)
+            persistir_fio_no_topico(self.estado)
+            self._registra_turno(mensagem, tipo, emocao, info_topicos)
 
             return resposta if resposta else "Desculpa, não entendi. Podes reformular?"
 
@@ -559,6 +683,15 @@ class Jeelsia:
                         periodo = "noite"
 
                     self._ultimo_tipo_resposta = "saudacao"
+
+                    # Saudação personalizada com o perfil do utilizador:
+                    # se soubermos o nome (tabela perfil_utilizador),
+                    # cumprimentamos pelo nome e retomamos o último
+                    # assunto da sessão anterior — como um humano faria.
+                    if self.ctx_perfil.get("nome"):
+                        saud = saudação_com_perfil(self.ctx_perfil, periodo)
+                        if saud:
+                            return saud
 
                     # Se já conversámos antes, saudação com continuidade
                     if self.estado.get("turnos", 0) > 1:
@@ -890,7 +1023,18 @@ class Jeelsia:
     def iniciar(self) -> None:
         """Inicia o loop principal da aplicação"""
         try:
-            print(f"Jeelsia : Olá! Eu sou {self.personalidade['nome']}, a tua assistente virtual. Como posso ajudar?")
+            # Boas-vindas personalizadas com o perfil guardado no SQLite
+            nome = self.ctx_perfil.get("nome")
+            assunto = self.ctx_perfil.get("ultimo_assunto")
+            if nome and assunto:
+                print(
+                    f"Jeelsia : Olá, {nome}! Bem-vindo de volta. Da última vez "
+                    f"falávamos sobre {assunto} — queres continuar ou abrir um novo assunto?"
+                )
+            elif nome:
+                print(f"Jeelsia : Olá, {nome}! Eu sou {self.personalidade['nome']}. Sobre o que queres conversar hoje?")
+            else:
+                print(f"Jeelsia : Olá! Eu sou {self.personalidade['nome']}, a tua assistente virtual. Como posso ajudar?")
             print("\nDigita o teu comando (ou 'sair' para terminar):")
             self.ultima_interacao = time.time()
 
