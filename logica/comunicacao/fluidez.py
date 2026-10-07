@@ -15,6 +15,7 @@ Todas as funções são puras em relação ao estado: recebem o ``estado``
 """
 
 import random
+import re
 
 from logica.contexto import extrair_topico
 
@@ -293,11 +294,18 @@ def casar_social_flexivel(
     frase = normalizar_texto(comando_lower)
     if not frase or len(frase.split()) > 8:
         return None
+    # Saudações temporais ("boa noite") não devem casar com DESPEDIDA —
+    # são abertura de conversa, não fecho.
+    _saud_temporal = bool(re.fullmatch(
+        r"(?:bom|boa)\s+\w{1,7}(?:\s+\w{1,3})?(?:\s+t(?:aludes|empos?))?",
+        frase))
 
     melhor_nome, melhor_s = None, 0
     melhor_respostas: list | None = None
     for nome, entrada in listas.items():
         if nome not in INTENCOES_SOCIAIS:
+            continue
+        if _saud_temporal and nome == "despedida":
             continue
         if not isinstance(entrada, list) or not entrada:
             continue
@@ -311,7 +319,10 @@ def casar_social_flexivel(
         if s > melhor_s:
             melhor_nome, melhor_s = nome, s
             melhor_respostas = respostas
-    if melhor_nome and melhor_s >= floor:
+    # Frases muito curtas (≤3 palavras) precisam de quase-exatidão —
+    # evita que "oi como voce esta" case com "palavras_curtas" a 62.
+    floor_eff = min(floor, 50) if len(frase.split()) <= 3 else floor
+    if melhor_nome and melhor_s >= floor_eff:
         return melhor_nome, random.choice(melhor_respostas)
     return None
 

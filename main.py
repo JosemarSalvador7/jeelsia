@@ -706,6 +706,7 @@ class Jeelsia:
     def _processar_comando(self, comando: str) -> str | None:
         """Processa o comando e retorna uma resposta"""
         try:
+            comando_lower = comando.lower()
             # Primeiro tenta responder palavras curtas
             resposta_curta = self._responder_palavras_curtas(comando)
             if resposta_curta:
