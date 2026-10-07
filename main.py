@@ -51,7 +51,7 @@ from logica.comunicacao import (
     finalizar_conversa,
     detectar_intencoes,
 )
-from logica.comunicacao.fluidez import compor_resposta
+from logica.comunicacao.fluidez import compor_resposta, casar_social_flexivel
 # Perfil do utilizador (tabela SQLite) + conversa multi-assunto
 from logica.perfil import (
     PerfilUtilizador,
@@ -734,6 +734,30 @@ class Jeelsia:
             if resposta_pergunta and resposta_pergunta not in self.sem_resposta:
                 self._ultimo_tipo_resposta = "conhecimento"
                 return resposta_pergunta
+
+            # ---- Casamento social flexível -----------------------------
+            # Turnos como "tudo e com voce" / "e tu?" não casam com o
+            # threshold rígido (90) de nenhuma variação, mas um humano
+            # nunca responderia "não entendi" a eles. Antes do fallback
+            # definitivo, procuramos a intenção SOCIAL mais próxima com
+            # score moderado — e acrescentamos a devolução da pergunta,
+            # porque "e com você?" espera resposta.
+            try:
+                social = casar_social_flexivel(comando_lower, listas)
+                if social:
+                    nome_intencao, resposta_social = social
+                    self._ultimo_tipo_resposta = nome_intencao
+                    if re.search(r"\b(e|como)\s+(c|vc|voc[eê]|você|tu|voce)\b",
+                                 comando_lower):
+                        resposta_social = resposta_social.rstrip(".!?") + \
+                            random.choice([
+                                " E contigo, tudo a correr bem?",
+                                " Mas diz lá, e contigo como está?",
+                                " E aí, do teu lado como estão as coisas?",
+                            ])
+                    return resposta_social
+            except Exception as e:
+                print(f"Erro no casamento social: {e}")
 
             # ULTIMO FALLBACK: Sugere comandos similares
             self._ultimo_tipo_resposta = "fallback"
