@@ -239,7 +239,7 @@ class KnowledgeBase:
         return resultados[:limite]
 
     def pesquisar_conhecimento_qradio(
-        self, pergunta: str, limite: int = 1, threshold: int = 100
+        self, pergunta: str, limite: int = 1, threshold: int = 85
     ) -> List[Dict[str, Any]]:
         """Busca nas perguntas/respostas usando QRatio"""
         if not pergunta or not pergunta.strip():

@@ -118,6 +118,15 @@ class Jeelsia:
         try:
             self.prefixos_factuais = prefixos_factuais()
             self.padroes_conversa = padroes_conversa()
+            # Fundir padrões base + novos tópicos de conversa (clima, amor,
+            # finanças, tecnologia, espiritualidade, etc.)
+            try:
+                from logica.msgs.topicos import padroes_topicos
+
+                for chave, valor in padroes_topicos().items():
+                    self.padroes_conversa.setdefault(chave, valor)
+            except Exception as e_t:
+                print(f"Aviso: não foi possível carregar tópicos extra: {e_t}")
             self.mensagens_busca = mensagens_busca()
             self.sem_resposta = sem_resposta()
         except Exception as e:
@@ -913,6 +922,28 @@ class Jeelsia:
                 except (KeyError, IndexError) as e:
                     print(f"Erro ao acessar comando mapeado {chave}: {e}")
                     continue
+
+            # --- Novos tópicos de conversa (clima, comida, amor, finanças...) ---
+            # Gatilhos curtos exigem correspondência quase exata; por isso o
+            # threshold é mais baixo que o padrão (90) apenas aqui.
+            _NOVOS_TOPICOS = {
+                "clima", "comida", "animais", "viagens", "futuro", "gratidao",
+                "solidao", "ansiedade", "autoestima", "sono", "esporte",
+                "musica", "filmes", "leitura", "familia", "amor", "carreira",
+                "tecnologia", "deportes_extremos", "natureza",
+                "trabalho_detalhado", "estudos_detalhado", "financas",
+                "espiritualidade", "humor_leve", "convite_conversa",
+                "elogio_mutuo", "despedidas_calorosas",
+            }
+            for chave_topico in sorted(_NOVOS_TOPICOS):
+                try:
+                    valor = listas[chave_topico]
+                except KeyError:
+                    continue
+                if analisar_similaridade(comando_lower, valor[0],
+                                         threshold=78, token_threshold=82):
+                    self._ultimo_tipo_resposta = chave_topico
+                    return random.choice(valor[1])
 
             # Data/Hora
             if analisar_similaridade(comando_lower, listas["data"]):
