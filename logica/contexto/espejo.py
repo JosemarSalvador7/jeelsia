@@ -85,18 +85,33 @@ def _refletir_texto(texto: str) -> str:
     return " ".join(_refletir_palavra(t) for t in tokens)
 
 
+def _preparar(mensagem: str) -> str:
+    """Normalização própria do espelho.
+
+    ``normalizar_texto`` remove todos os sinais de pontuação, incluindo o
+    hífen dos mesoclíticos ("pesar-me" -> "pesarme"), o que quebrava os
+    padrões de reflexão. Aqui preservamos hífens e apóstrofos e mantemos
+    as vogais acentuadas (as regex usam [\\w], que já cobre acentos).
+    """
+    if not mensagem:
+        return ""
+    texto = re.sub(r"[^A-Za-zÀ-ÿ0-9\s'-]", "", mensagem)
+    texto = re.sub(r"\s{2,}", " ", texto)
+    return texto.lower().strip()
+
+
 def extrair_conteudo_espelhavel(mensagem: str) -> str | None:
     """Devolve o núcleo declarativo da mensagem, já refletido ("seu/está").
 
-    Ex.: "o trabalho está a pesar-me" -> "que o trabalho te está a pesar"
-         "estou muito cansada"         -> "muito cansada"
+    Ex.: "o trabalho está a pesar-me" -> "que o trabalho está a pesar-te"
+         "estou muito cansada"         -> "que muito cansada ultimamente"
 
     Regras anti-ruído (a ELIZA espelhava tudo e por isso soava vazia):
     - exige verbo de conteúdo + complemento com >= 3 palavras reais
       (sem stopwords) — frases vagas como "estou assim" não espelham;
     - corta o complemento na primeira vírgula longa ou em 14 palavras.
     """
-    m = normalizar_texto(mensagem)
+    m = _preparar(mensagem)
     if not m:
         return None
 
@@ -106,6 +121,7 @@ def extrair_conteudo_espelhavel(mensagem: str) -> str | None:
     aux = _RE_ESTA_A.search(m)
     match = _RE_VERBO.search(m)
     comp: str | None
+    prefixo_que = True
     if aux and (not match or aux.start() < match.start()):
         comp = f"{aux.group('suj').strip()} está a {aux.group('inf')}"
         palavras_aux = comp.split()
@@ -114,7 +130,15 @@ def extrair_conteudo_espelhavel(mensagem: str) -> str | None:
             palavras_aux = palavras_aux[1:]
         comp = " ".join(palavras_aux)
     elif match:
+        verbo = m[max(0, match.start()):match.start("comp")].strip()
         comp = match.group("comp").strip()
+        # Verbos que já introduzem complemento com conjunção ("acho que X",
+        # "gosto de X") não levem "que" extra — o espelho usa o próprio
+        # trecho ("que eu acho que...", "de que gostas..." soariam mal;
+        # "que pensas que..." é aceitável, mas "que adoras" não).
+        if verbo in ("gosto de", "gosta de", "adoro", "odeio",
+                     "nao suporto", "não suporto"):
+            prefixo_que = False
     else:
         return None
 
@@ -130,8 +154,13 @@ def extrair_conteudo_espelhavel(mensagem: str) -> str | None:
 
     comp = " ".join(palavras[:14])
     refletido = _refletir_texto(comp)
+    # Mesoclíticos em 1.ª pessoa: "pesar-me" -> "pesar-te",
+    # "entender-me" -> "entender-te" (ELIZA clássica fazia o mesmo com
+    # "myself" -> "yourself").
+    refletido = re.sub(r"-me\b", "-te", refletido)
     # "que ..." soa mais natural em perguntas indiretas
-    if not refletido.startswith(("que ", "se ", "como ", "quando ")):
+    if prefixo_que and not refletido.startswith(
+            ("que ", "se ", "como ", "quando ")):
         refletido = f"que {refletido}"
     return refletido
 
@@ -201,7 +230,9 @@ def gerar_espejo(mensagem: str, estado: dict | None = None,
         # Evita duas perguntas coladas
         return espejo if espejo.rstrip().endswith("?") else espejo + "?"
 
-    m = normalizar_texto(mensagem)
+    # Marcadores de indecisão: a mensagem pode ter pontuação/acentos que
+    # _preparar preserva, por isso testamos sobre o texto já preparado.
+    m = _preparar(mensagem)
     if any(e in m for e in ("não sei", "nao sei", "talvez", "não faço ideia",
                             "nao faco ideia", "sei lá", "sei la")):
         ponte = random.choice(_ESPEJO_VAGO)
@@ -211,6 +242,11 @@ def gerar_espejo(mensagem: str, estado: dict | None = None,
         return ponte
 
     return None
+
+
+def tem_conteudo_espelhavel(mensagem: str) -> bool:
+    """True se a mensagem tem conteúdo pessoal aproveitável pelo espelho."""
+    return extrair_conteudo_espelhavel(mensagem) is not None
 
 
 # ----------------------------------------------------------------------
