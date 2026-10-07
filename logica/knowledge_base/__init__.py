@@ -35,7 +35,15 @@ _MAPA_INSERCAO: dict[str, tuple[list[dict], list[str]]] = {
 
 
 def criar_estrutura(conn: sqlite3.Connection) -> None:
-    """Garante que todas as tabelas e índices existem (mesmo DDL de KnowledgeBase)."""
+    """Garante que todas as tabelas e índices existem (mesmo DDL de KnowledgeBase).
+
+    Inclui também as tabelas de perfil do utilizador
+    (``perfil_utilizador`` / ``historico_conversas``).
+    """
+    from logica.perfil.perfil import DDL_PERFIL
+
+    conn.executescript(DDL_PERFIL)
+    conn.execute("INSERT OR IGNORE INTO perfil_utilizador (id) VALUES (1)")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS factos (

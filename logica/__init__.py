@@ -23,6 +23,16 @@ from .comunicacao import (
     finalizar_conversa,
 )
 from .comunicacao.fluidez import compor_resposta
+# Perfil do utilizador (tabela no SQLite) + conversa multi-assunto
+from .perfil import (
+    PerfilUtilizador,
+    extrair_informacoes,
+    contexto_pessoal,
+    personalizar_resposta,
+    MUDANCA_TOPICO,
+    detectar_mudanca_topico,
+    gerir_topicos,
+)
 
 __all__ = [
     "KnowledgeBase",
@@ -47,4 +57,12 @@ __all__ = [
     "gerar_despedida",
     "finalizar_conversa",
     "compor_resposta",
+    # perfil do utilizador + multi-assunto
+    "PerfilUtilizador",
+    "extrair_informacoes",
+    "contexto_pessoal",
+    "personalizar_resposta",
+    "MUDANCA_TOPICO",
+    "detectar_mudanca_topico",
+    "gerir_topicos",
 ]
