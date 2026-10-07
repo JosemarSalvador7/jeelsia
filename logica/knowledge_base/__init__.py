@@ -19,8 +19,30 @@ from .seeds import (
     SEED_FACTOS,
     SEED_HABILIDADES,
     SEED_HISTORIAS,
-    obter_seeds,
 )
+from .seeds_extra import (
+    SEED_CONHECIMENTOS_EXTRA,
+    SEED_CONSELHOS_EXTRA,
+    SEED_FACTOS_EXTRA,
+    SEED_HISTORIAS_EXTRA,
+)
+
+# Fundir seeds originais + extras e reexportar via obter_seeds()
+SEED_FACTOS = SEED_FACTOS + SEED_FACTOS_EXTRA
+SEED_CONHECIMENTOS = SEED_CONHECIMENTOS + SEED_CONHECIMENTOS_EXTRA
+SEED_CONSELHOS = SEED_CONSELHOS + SEED_CONSELHOS_EXTRA
+SEED_HISTORIAS = SEED_HISTORIAS + SEED_HISTORIAS_EXTRA
+
+
+def obter_seeds() -> dict:
+    """Devolve todos os conjuntos de dados semente (originais + extras)."""
+    return {
+        "factos": SEED_FACTOS,
+        "conhecimentos": SEED_CONHECIMENTOS,
+        "conselhos": SEED_CONSELHOS,
+        "habilidades": SEED_HABILIDADES,
+        "historias": SEED_HISTORIAS,
+    }
 
 DB_PADRAO = "./cerebro.db"
 
