@@ -24,6 +24,16 @@ from logica.contexto import (
     obter_resposta_unica,
     aplicar_reflections,
 )
+# Módulo de comunicação: fluidez e naturalidade das respostas
+from logica.comunicacao import (
+    gerar_transicao,
+    gerar_pergunta_seguimento,
+    gerar_resposta_curta,
+    gerar_reconhecimento,
+    gerar_despedida,
+    finalizar_conversa,
+)
+from logica.comunicacao.fluidez import compor_resposta
 # Configurações iniciais
 sys.dont_write_bytecode = True
 
@@ -125,52 +135,13 @@ class Jeelsia:
 
 
     def _responder_palavras_curtas(self, mensagem: str) -> str | None:
-        """Responde a palavras curtas como 'sim', 'não', etc."""
-        mensagem_limpa = mensagem.lower().strip()
-        
-        # Verifica respostas curtas baseadas no contexto
-        if mensagem_limpa in ["sim", "s", "si", "yeah", "yep", "claro", "exato", "exatamente", "certeza", "ok", "okei", "blz", "beleza"]:
-            if self.historico_conversa:
-                return random.choice([
-                    "Fico feliz que concordes! O que mais gostarias de abordar?",
-                    "Excelente! Vamos continuar nessa linha então.",
-                    "Perfeito! É sempre bom quando estamos na mesma página.",
-                    "Ótimo! Queres aprofundar algum ponto específico?",
-                    "Que bom que concordas! O que mais podemos explorar?",
-                    "Boa! Estamos na mesma sintonia. Continua."
-                ])
-            return random.choice([
-                "Sim! O que mais posso fazer por ti?",
-                "Perfeito! Estou aqui para o que precisares.",
-                "Ótimo! Diz-me como posso ajudar."
-            ])
-        
-        elif mensagem_limpa in ["não", "n", "nao", "nah", "nem", "nops", "nunca", "negativo"]:
-            if self.historico_conversa:
-                return random.choice([
-                    "Entendo. Se mudares de ideia, estou aqui.",
-                    "Tudo bem, respeito a tua decisão. Queres falar sobre outra coisa?",
-                    "Sem problemas! O importante é te sentires confortável.",
-                    "Certo. Se quiseres explorar outros tópicos, é só dizer.",
-                    "Compreendo. Estou disponível para o que precisares.",
-                    "Respeito a tua posição. Queres conversar sobre algo diferente?"
-                ])
-            return random.choice([
-                "Entendo. Se precisares de algo, estou disponível.",
-                "Tudo bem. O que gostarias de fazer então?",
-                "Certo. Estou aqui quando precisares."
-            ])
-        
-        elif mensagem_limpa in ["talvez", "quem sabe", "pode ser", "vamos ver", "não sei", "dúvida"]:
-            return random.choice([
-                "Compreendo. Às vezes é bom refletir um pouco antes de decidir.",
-                "Tudo bem, podemos deixar em aberto. O que mais te interessa?",
-                "Entendo a indecisão. Queres pensar mais sobre isso?",
-                "Às vezes a dúvida nos ajuda a tomar melhores decisões.",
-                "Sem pressa! O importante é chegares a uma decisão que te agrade."
-            ])
-        
-        return None
+        """Responde a palavras curtas como 'sim', 'não', etc.
+
+        A lógica agora vive em ``logica.comunicacao.gerar_resposta_curta``:
+        as reformulações dependem do tópico anterior, dando continuidade
+        natural à conversa em vez de despejar frases fixas.
+        """
+        return gerar_resposta_curta(mensagem, self.estado)
 
     def _sugerir_comando_similar(self, comando: str) -> str | None:
         """Sugere comandos similares quando não entende o que o usuário disse"""
@@ -329,7 +300,15 @@ class Jeelsia:
             return random.choice(respostas_base)
 
     def responder(self, mensagem: str) -> str:
-        """Método principal para processar e responder mensagens"""
+        """Método principal para processar e responder mensagens.
+
+        Fluxo com comunicação fluida (logica.comunicacao):
+        1. Mensagens vazias → convite amigável;
+        2. Emoção forte → empatia + seguimento (conversa, não monólogo);
+        3. Mensagens longas → reconhecimento de que a IA "ouviu";
+        4. Resposta normal → composta com transição/pergunta de seguimento
+           para manter o ritmo natural da conversa.
+        """
         try:
             if not mensagem or not mensagem.strip():
                 return random.choice([
@@ -344,31 +323,51 @@ class Jeelsia:
             # Detecta emoção (lógica movida para logica.emocoes)
             emocao = detectar_emocao(mensagem)
 
-            # Resposta empática se houver emoção forte
+            # Mantém contexto ANTES de compor respostas dependentes dele
+            manter_contexto(self.estado, mensagem)
+            self.estado["turnos"] = self.estado.get("turnos", 0) + 1
+
+            # Resposta empática se houver emoção forte — sempre com
+            # pergunta de seguimento para abrir espaço ao desabafo
             resposta_empatica = responder_com_empatia(emocao, mensagem)
             if resposta_empatica:
+                seguimento = gerar_pergunta_seguimento(self.estado, "emocao")
+                if seguimento and not resposta_empatica.rstrip().endswith("?"):
+                    resposta_empatica = f"{resposta_empatica} {seguimento}"
+                elif not resposta_empatica.rstrip().endswith("?"):
+                    resposta_empatica = f"{resposta_empatica} Queres contar-me mais?"
                 return obter_resposta_unica(self.estado, resposta_empatica)
-
-            # Mantém contexto (lógica movida para logica.contexto)
-            manter_contexto(self.estado, mensagem)
 
             # Verifica comandos especiais de saída
             if mensagem.lower() in ["sair", "fechar", "terminar", "exit", "quit"]:
                 self.ativo = False
                 self.evento_terminar.set()
-                return "Foi um prazer ajudar! Até logo!"
+                return finalizar_conversa(self.estado)
+
+            # Reconhecimento imediato para mensagens longas/elaboradas
+            reconhecimento = gerar_reconhecimento(mensagem)
 
             # Processa o comando
             resposta = self._processar_comando(mensagem)
-            
+
             # Aplica reflexões se for uma pergunta sobre o usuário
             if resposta and ("você" in resposta or "tu" in resposta or "te" in resposta):
                 resposta = aplicar_reflections(resposta)
 
+            # Composição fluida: transição + corpo + pergunta de seguimento.
+            # Palavras curtas e fallbacks já são conversacionais — não poluir.
+            tipo = getattr(self, "_ultimo_tipo_resposta", None)
+            eh_conversacional = tipo in ("palavra_curta", "fallback", "saudacao")
+            if resposta and not eh_conversacional:
+                resposta = compor_resposta(resposta, self.estado, tipo_resposta=tipo)
+
+            if resposta and reconhecimento:
+                resposta = f"{reconhecimento} {resposta[0].lower() + resposta[1:]}"
+
             # Evita repetição
             if resposta:
                 resposta = obter_resposta_unica(self.estado, resposta)
-            
+
             return resposta if resposta else "Desculpa, não entendi. Podes reformular?"
 
         except KeyboardInterrupt:
@@ -385,6 +384,7 @@ class Jeelsia:
             # Primeiro tenta responder palavras curtas
             resposta_curta = self._responder_palavras_curtas(comando)
             if resposta_curta:
+                self._ultimo_tipo_resposta = "palavra_curta"
                 return resposta_curta
 
             # Primeiro tenta conversa
@@ -407,13 +407,16 @@ class Jeelsia:
             # Se não for conversa, tenta responder pergunta
             resposta_pergunta = self._responder_pergunta(comando)
             if resposta_pergunta and resposta_pergunta not in self.sem_resposta:
+                self._ultimo_tipo_resposta = "conhecimento"
                 return resposta_pergunta
 
             # ULTIMO FALLBACK: Sugere comandos similares
+            self._ultimo_tipo_resposta = "fallback"
             return self._fallback_resposta(comando)
 
         except Exception as e:
             print(f"Erro inesperado em _processar_comando: {e}")
+            self._ultimo_tipo_resposta = "fallback"
             return self._fallback_resposta(comando)
 
     def _manter_conversa(self, comando: str) -> str | None:
@@ -433,22 +436,26 @@ class Jeelsia:
                     else:
                         periodo = "noite"
 
+                    self._ultimo_tipo_resposta = "saudacao"
+
+                    # Se já conversámos antes, saudação com continuidade
+                    if self.estado.get("turnos", 0) > 1:
+                        return random.choice([
+                            f"Olá de novo! Boa {periodo.capitalize()}! Sobre o que querias continuar?",
+                            f"Oi! Retomando a nossa conversa — boa {periodo}! Em que posso ajudar agora?",
+                            f"Bom de novo falar contigo nesta {periodo}! O que tens em mente?",
+                        ])
+
                     return random.choice([
                         f"Boa {periodo.capitalize()}! Como posso ajudar?",
                         f"Olá! Tudo bem? Boa {periodo.capitalize()}!",
                         "Saudações! Como vai essa força?",
                         f"Boa {periodo.capitalize()}! Que tenhas uma {periodo.capitalize()} maravilhosa!",
-                        f"Boa {periodo.capitalize()} Continuação de um boa! {periodo.capitalize()}",
-                        f"Olá! {periodo.capitalize()}!. Como vai você?",
-                        f"{periodo.capitalize()}! Que alegria falar com você! Tudo bem?",
-                        f"Oi! {periodo.capitalize()}!. Como está se sentindo hoje?",
-                        f"{periodo.capitalize()}! Espero que esteja tudo bem por aí. Como está?",
-                        f"Olá! {periodo.capitalize()}!. Tudo tranquilo com você?",
-                        "Oi! Tudo ótimo por aqui",
-                        "Obrigada por perguntar! E com você, como está a vida?",
-                        "Olá! Estou muito bem, cheia de energia! E você, como vai?",
+                        f"Olá! Boa {periodo.capitalize()}! Como está a correr o teu dia?",
+                        f"{periodo.capitalize()}! Que alegria falar contigo! Tudo bem?",
+                        "Oi! Tudo ótimo por aqui. E contigo, como está a correr o dia?",
+                        "Olá! Estou muito bem, cheia de energia! E tu, como vais?",
                         "Hey! Tudo tranquilo por aqui! E aí, como estão as coisas contigo?",
-                        "Olá! Estou bem, obrigada! E você, tudo em ordem?"
                     ])
                 except Exception as e:
                     print(f"Erro ao processar saudação: {e}")
@@ -517,6 +524,7 @@ class Jeelsia:
             # Piadas
             if analisar_similaridade(comando_lower, listas["humor"]):
                 try:
+                    self._ultimo_tipo_resposta = "piada"
                     return random.choice(listas["piada"])
                 except (KeyError, IndexError) as e:
                     print(f"Erro ao buscar piada: {e}")
@@ -587,6 +595,7 @@ class Jeelsia:
             # Conselho
             if analisar_similaridade(comando_lower, listas["conselho"]):
                 try:
+                    self._ultimo_tipo_resposta = "conselho"
                     self._mostrar_mensagem_busca()
                     conselhos = self.kb.pesquisar_conselhos_qradio("", limite=3)
                     if conselhos and len(conselhos) > 0 and conselhos[0]["similaridade"] >= 80:
@@ -599,6 +608,7 @@ class Jeelsia:
             # História
             if "conte uma historia" in comando_lower or "conta uma história" in comando_lower:
                 try:
+                    self._ultimo_tipo_resposta = "história"
                     self._mostrar_mensagem_busca()
                     return self._contar_historia()
                 except Exception as e:
@@ -684,12 +694,20 @@ class Jeelsia:
             return random.choice(self.sem_resposta)
 
     def _mostrar_mensagem_busca(self) -> None:
-        """Mostra uma mensagem divertida enquanto busca informações"""
+        """Mostra uma mensagem divertida enquanto busca informações.
+
+        Melhoria de fluxo: a mensagem temporária é APAGADA da linha antes
+        da resposta final ser impressa pelo loop principal, evitando o
+        artefacto "Jeelsia : Já já te respondo...Jeelsia : <resposta>".
+        """
         try:
             if self.mensagens_busca:
                 mensagem = random.choice(self.mensagens_busca)
-                print(f"\rJeelsia : {mensagem}", end="", flush=True)
+                texto = f"\rJeelsia : {mensagem}"
+                print(texto, end="", flush=True)
                 time.sleep(0.5)
+                # Limpa a linha para que só a resposta final apareça
+                print("\r" + " " * (len(texto) + 4) + "\r", end="", flush=True)
         except Exception:
             pass
 
