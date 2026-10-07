@@ -1,6 +1,6 @@
 # Compiled files
-*.pyc
 __pycache__/
+*.pyc
 
-# Database files
+# Database
 cerebro.db

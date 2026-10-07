@@ -744,7 +744,7 @@ class Jeelsia:
             # score moderado — e acrescentamos a devolução da pergunta,
             # porque "e com você?" espera resposta.
             try:
-                social = casar_social_flexivel(comando_lower, listas)
+                social = casar_social_flexivel(comando_lower, self.padroes_conversa)
                 if social:
                     nome_intencao, resposta_social = social
                     self._ultimo_tipo_resposta = nome_intencao
