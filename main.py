@@ -16,7 +16,11 @@ from logica import (
 )
 # Novos módulos: utilitários de texto, emoções e contexto da conversa
 from logica.utils import normalizar_texto, analisar_similaridade
-from logica.emocoes import detectar_emocao, responder_com_empatia
+from logica.emocoes import (
+    detectar_emocao,
+    deve_priorizar_empatia,
+    responder_com_empatia,
+)
 from logica.contexto import (
     criar_estado,
     extrair_topico,
@@ -32,6 +36,7 @@ from logica.comunicacao import (
     gerar_reconhecimento,
     gerar_despedida,
     finalizar_conversa,
+    detectar_intencoes,
 )
 from logica.comunicacao.fluidez import compor_resposta
 # Configurações iniciais
@@ -327,9 +332,22 @@ class Jeelsia:
             manter_contexto(self.estado, mensagem)
             self.estado["turnos"] = self.estado.get("turnos", 0) + 1
 
-            # Resposta empática se houver emoção forte — sempre com
-            # pergunta de seguimento para abrir espaço ao desabafo
-            resposta_empatica = responder_com_empatia(emocao, mensagem)
+            # Resposta empática: tem PRIORIDADE quando o utilizador fala
+            # de si com emoção forte ("estou mal", "não correu bem"),
+            # mesmo que um padrão genérico também coincida. Quando a
+            # empatia não é prioritária, o fluxo segue para intenções —
+            # mas recorda a emoção para contextualizar a resposta.
+            prioridade_empatia = deve_priorizar_empatia(emocao, mensagem)
+            resposta_empatica = None
+            if prioridade_empatia:
+                resposta_empatica = responder_com_empatia(
+                    emocao, mensagem, self.estado
+                )
+            else:
+                # Regista apenas a memória emocional (sem monopolizar a resposta)
+                if emocao.get("dominante") != "neutro":
+                    self.estado["ultima_emocao"] = emocao["dominante"]
+
             if resposta_empatica:
                 seguimento = gerar_pergunta_seguimento(self.estado, "emocao")
                 if seguimento and not resposta_empatica.rstrip().endswith("?"):
@@ -350,13 +368,31 @@ class Jeelsia:
             # Processa o comando
             resposta = self._processar_comando(mensagem)
 
-            # Aplica reflexões se for uma pergunta sobre o usuário
-            if resposta and ("você" in resposta or "tu" in resposta or "te" in resposta):
-                resposta = aplicar_reflections(resposta)
-
-            # Composição fluida: transição + corpo + pergunta de seguimento.
-            # Palavras curtas e fallbacks já são conversacionais — não poluir.
+            # Fluidez contextual: se a intenção casada era genérica mas o
+            # utilizador demonstrou emoção neste turno (ex.: "estou bem,
+            # obrigado" após um dia mau), emendar com continuidade em vez
+            # de responder como se nada tivesse acontecido.
             tipo = getattr(self, "_ultimo_tipo_resposta", None)
+            if (
+                resposta
+                and emocao.get("dominante") in ("tristeza", "raiva", "medo")
+                and emocao.get(emocao["dominante"], 0) >= 40
+                and tipo in ("agradecimento", "estado", "saudacao", None)
+            ):
+                ponte = random.choice([
+                    "Ainda assim, sinto muito pelo teu dia difícil.",
+                    "Mesmo assim, espero que as coisas melhorem depressa.",
+                    "Fico contente, mas continua a contar comigo sobre o que te pesa.",
+                ])
+                resposta = f"{resposta} {ponte}"
+                self._ultimo_tipo_resposta = "emocao"
+                tipo = "emocao"
+
+            # Aplica reflexões apenas quando o corpo da resposta é uma
+            # pergunta DIRETA ao utilizador — evita espelhar pronomes no
+            # meio de frases fixas e corromper texto ("com tu ajuda"?).
+            if resposta and resposta.rstrip().endswith("?"):
+                resposta = aplicar_reflections(resposta)
             eh_conversacional = tipo in ("palavra_curta", "fallback", "saudacao")
             if resposta and not eh_conversacional:
                 resposta = compor_resposta(resposta, self.estado, tipo_resposta=tipo)

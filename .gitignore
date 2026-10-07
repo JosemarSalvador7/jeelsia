@@ -1,6 +1,6 @@
-# Python bytecode
+# Compiled and build artifacts
 __pycache__/
 *.pyc
 
 # Database files
-*.db
+cerebro.db

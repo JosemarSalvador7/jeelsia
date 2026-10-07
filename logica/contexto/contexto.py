@@ -56,6 +56,11 @@ def criar_estado() -> dict:
         # Campos de fluidez conversacional (logica.comunicacao)
         "ultima_pergunta_seguimento": None,
         "turnos": 0,
+        # Memória emocional (logica.emocoes): última emoção dominante e
+        # últimas frases empáticas usadas por emoção (evita repetição e
+        # permite continuidade do desabafo entre turnos).
+        "ultima_emocao": None,
+        "historico_empaticas": {},
     }
 
 
