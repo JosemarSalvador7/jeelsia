@@ -14,6 +14,15 @@ from .contexto.contexto import (
     obter_resposta_unica,
     aplicar_reflections,
 )
+from .comunicacao import (
+    gerar_transicao,
+    gerar_pergunta_seguimento,
+    gerar_resposta_curta,
+    gerar_reconhecimento,
+    gerar_despedida,
+    finalizar_conversa,
+)
+from .comunicacao.fluidez import compor_resposta
 
 __all__ = [
     "KnowledgeBase",
@@ -30,4 +39,12 @@ __all__ = [
     "manter_contexto",
     "obter_resposta_unica",
     "aplicar_reflections",
+    # comunicação / fluidez
+    "gerar_transicao",
+    "gerar_pergunta_seguimento",
+    "gerar_resposta_curta",
+    "gerar_reconhecimento",
+    "gerar_despedida",
+    "finalizar_conversa",
+    "compor_resposta",
 ]

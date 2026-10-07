@@ -53,6 +53,9 @@ def criar_estado() -> dict:
         "ultimas_respostas": [],
         "max_historico_respostas": 5,
         "ultimo_topico": None,
+        # Campos de fluidez conversacional (logica.comunicacao)
+        "ultima_pergunta_seguimento": None,
+        "turnos": 0,
     }
 
 
