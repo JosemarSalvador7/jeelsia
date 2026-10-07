@@ -191,6 +191,70 @@ def gerar_transicao(estado: dict, emocao: dict | None = None) -> str:
     return random.choice(TRANSICOES_GERAIS)
 
 
+# ----------------------------------------------------------------------
+# 6. Detete de intenção por similaridade (ordem determinística)
+# ----------------------------------------------------------------------
+
+# Ordem em que as intenções são testadas — substitui a iteração sobre
+# dicionário (que dependia da ordem de inserção e produzia casamentos
+# inesperados). Intenções pessoais/emocionais vêm antes das gerais.
+ORDEM_INTENCOES = [
+    "saudacao_despedida",
+    "agradecimento",
+    "elogio",
+    "teamo",
+    "sad_state_user",
+    "good_state_user",
+    "cansado",
+    "estado",
+    "identidade",
+    "criador",
+    "idade",
+    "origem",
+    "piada",
+    "conselho",
+    "historia",
+    "data",
+    "horas",
+]
+
+
+def detectar_intencoes(mensagem: str, listas: dict) -> list[tuple[str, int]]:
+    """Devolve todas as intenções que casam com a mensagem, ordenadas.
+
+    Percorre ``listas`` (o dicionário de padrões de conversa) de forma
+    determinística e devolve pares ``(intenção, score_máximo)`` para
+    todas as intenções cujo melhor candidato atinja o threshold.
+    Ordena por score decrescente — quem decide a prioridade é o caller.
+    """
+    from logica.utils.texto import normalizar_texto
+    from rapidfuzz import fuzz
+
+    frase = normalizar_texto(mensagem)
+    encontrados: list[tuple[str, int]] = []
+
+    for nome, entrada in listas.items():
+        chaves = entrada[0] if isinstance(entrada, list) and entrada and isinstance(entrada[0], list) else entrada
+        melhor = 0
+        for k in chaves:
+            try:
+                s = max(fuzz.QRatio(frase, k), fuzz.token_sort_ratio(frase, k))
+            except Exception:
+                continue
+            if s > melhor:
+                melhor = s
+        if melhor >= 90:
+            encontrados.append((nome, int(melhor)))
+
+    encontrados.sort(key=lambda x: x[1], reverse=True)
+    return encontrados
+
+
+def responder_a_intencao_esperando_resposta(anterior: str | None) -> bool:
+    """Heurística simples: a última resposta da IA terminava em pergunta?"""
+    return bool(anterior and anterior.rstrip().endswith("?"))
+
+
 def gerar_pergunta_seguimento(
     estado: dict, tipo_resposta: str | None = None
 ) -> str | None:

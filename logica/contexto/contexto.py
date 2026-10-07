@@ -7,9 +7,21 @@ estado partilhado (``estado``), mantendo o comportamento original:
 - manter_contexto: atualiza o histórico e deteta continuidade de tópico.
 - obter_resposta_unica: evita repetição de respostas recentes.
 - aplicar_reflections: inverte pronomes ("eu" -> "você", etc.).
+
+O submódulo ``fio`` acrescenta a capacidade de *conduzir* a conversa:
+desenvolver o tema ativo, retomar desabafos pendentes e reconhecer
+respostas elípticas ("sim"/"pois") sem perder o contexto entre turnos.
 """
 
 import random
+
+from .fio import (
+    atualizar_fio,
+    encerrar_fio_se_despedida,
+    proxima_pergunta_progressiva,
+    responder_elipse,
+    retomar_fio,
+)
 
 # Palavras comuns removidas na extração de tópicos
 STOPWORDS = [
@@ -56,6 +68,16 @@ def criar_estado() -> dict:
         # Campos de fluidez conversacional (logica.comunicacao)
         "ultima_pergunta_seguimento": None,
         "turnos": 0,
+        # Memória emocional (logica.emocoes): última emoção dominante e
+        # últimas frases empáticas usadas por emoção (evita repetição e
+        # permite continuidade do desabafo entre turnos).
+        "ultima_emocao": None,
+        "historico_empaticas": {},
+        # Fio condutor da conversa (logica.contexto.fio): mantém a linha
+        # de conversa ativa entre turnos para desenvolver o tema sem
+        # perder o contexto.
+        "fio": {"emocao": None, "nivel": 0,
+                "ultima_pergunta": None, "resumo": []},
     }
 
 

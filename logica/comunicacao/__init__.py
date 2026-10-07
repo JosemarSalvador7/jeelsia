@@ -17,6 +17,7 @@ from .fluidez import (
     gerar_reconhecimento,
     gerar_despedida,
     finalizar_conversa,
+    detectar_intencoes,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "gerar_reconhecimento",
     "gerar_despedida",
     "finalizar_conversa",
+    "detectar_intencoes",
 ]
